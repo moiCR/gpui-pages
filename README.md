@@ -22,6 +22,7 @@ fn main() {
     gpui_platform::application()
         .use_pages()
         .routes(PAGE_ROUTES)
+        .title("Pages Demo")
         .run();
 }
 ```
@@ -58,5 +59,7 @@ Each `mod.rs` contains one top-level `impl Page` for a local, non-generic `pub` 
 Get the window's router with `router(window, cx)`. Update the returned entity to call `navigate`, `replace`, `back`, or `forward`. An unknown route returns an error and leaves the current route in place.
 
 Pages can override `Page::options()` with `PageOptions::default().on_open(PageAnimation::SlideFade).on_close(PageAnimation::Fade)`. Use `.configure(PagesConfig::new().default_animation(...))` before `.routes(...)` to set app defaults. Scale effects adjust GPUI rem-based sizing within the transitioning view. Fixed-pixel dimensions keep their size.
+
+Use `PageOptions::default().title("Profile")` to set a page's window title. Pages without a title use the application title.
 
 Run `cargo run -p demo` to visit the example. Increment the Dashboard layout counter and switch between Juanito and Settings to see the shared layout retain its state. Open Profile to see a transition.

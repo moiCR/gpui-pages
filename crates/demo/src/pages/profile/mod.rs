@@ -6,6 +6,7 @@ pub struct ProfilePage;
 impl Page for ProfilePage {
     fn options() -> PageOptions {
         PageOptions::default()
+            .title("Profile")
             .on_open(PageAnimation::SlideFade)
             .on_close(PageAnimation::Fade)
     }

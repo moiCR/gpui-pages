@@ -18,6 +18,7 @@ pub enum PageAnimation {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PageOptions {
+    pub(crate) title: Option<&'static str>,
     open: Option<PageAnimation>,
     close: Option<PageAnimation>,
     duration: Option<Duration>,
@@ -25,6 +26,11 @@ pub struct PageOptions {
 }
 
 impl PageOptions {
+    pub fn title(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
+    }
+
     pub fn on_open(mut self, animation: PageAnimation) -> Self {
         self.open = Some(animation);
         self

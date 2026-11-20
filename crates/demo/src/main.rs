@@ -6,6 +6,7 @@ fn main() {
     gpui_platform::application()
         .use_pages()
         .routes(PAGE_ROUTES)
+        .title("Pages Demo")
         .run();
 }
 
@@ -80,13 +81,18 @@ mod tests {
             let manager =
                 PageManager::new(PAGE_ROUTES, "/", cx).expect("mount the generated index");
             cx.new(|_| manager).update(cx, |manager, cx| {
+                assert_eq!(manager.current_title(), Some("Home"));
                 manager
                     .navigate("/profile", cx)
                     .expect("start opening Profile");
+                assert_eq!(manager.current_title(), Some("Profile"));
                 manager
                     .navigate("/dashboard/settings", cx)
                     .expect("interrupt the Profile transition");
                 assert_eq!(manager.current_path(), "/dashboard/settings");
+                assert_eq!(manager.current_title(), None);
+                assert!(manager.back(cx));
+                assert_eq!(manager.current_title(), Some("Profile"));
             });
         });
     }

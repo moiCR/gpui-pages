@@ -1,7 +1,7 @@
 pub use gpui;
 use gpui::{
     AnyView, App, AppContext, Application, Context, Entity, Global, IntoElement, ParentElement,
-    Render, Window, WindowOptions, div,
+    Render, SharedString, Subscription, Window, WindowOptions, div,
 };
 pub use pages_macros::include_pages;
 mod transition;
@@ -40,6 +40,7 @@ impl PagesApplication {
         RoutedApplication {
             application: self,
             routes,
+            window_options: WindowOptions::default(),
         }
     }
 
@@ -54,9 +55,15 @@ impl PagesApplication {
 pub struct RoutedApplication {
     application: PagesApplication,
     routes: &'static [Route],
+    window_options: WindowOptions,
 }
 
 impl RoutedApplication {
+    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
+        self.window_options.titlebar.get_or_insert_default().title = Some(title.into());
+        self
+    }
+
     pub fn run(self) {
         let config = self.application.config;
         self.application.run_with(move |cx| {
@@ -68,8 +75,30 @@ impl RoutedApplication {
                     return;
                 }
             };
-            match cx.open_window(WindowOptions::default(), |_, cx| {
-                cx.new(|_| PagesRoot { manager })
+            let mut window_options = self.window_options;
+            let default_title = window_options
+                .titlebar
+                .as_ref()
+                .and_then(|bar| bar.title.clone());
+            if let Some(title) = manager.read(cx).current_title() {
+                window_options.titlebar.get_or_insert_default().title = Some(title.into());
+            }
+            match cx.open_window(window_options, |window, cx| {
+                cx.new(|cx| {
+                    let title_subscription =
+                        cx.observe_in(&manager, window, move |_, manager, window, cx| {
+                            let title = manager
+                                .read(cx)
+                                .current_title()
+                                .or(default_title.as_deref())
+                                .unwrap_or_default();
+                            window.set_window_title(title);
+                        });
+                    PagesRoot {
+                        manager,
+                        _title_subscription: title_subscription,
+                    }
+                })
             }) {
                 Ok(_) => cx.activate(true),
                 Err(error) => {
@@ -83,6 +112,7 @@ impl RoutedApplication {
 
 struct PagesRoot {
     manager: Entity<PageManager>,
+    _title_subscription: Subscription,
 }
 
 impl Render for PagesRoot {
@@ -251,6 +281,10 @@ impl PageManager {
 
     pub fn current_path(&self) -> &'static str {
         self.active.path
+    }
+
+    pub fn current_title(&self) -> Option<&'static str> {
+        (self.active.options)().title
     }
 
     pub fn back(&mut self, cx: &mut Context<Self>) -> bool {

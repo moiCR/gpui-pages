@@ -1,5 +1,3 @@
-pub const TITLE: &str = "Root";
-
 use gpui_pages::{
     PageLayout,
     gpui::{AnyView, Context, IntoElement, Window, div, prelude::*},
@@ -43,7 +41,7 @@ impl PageLayout for RootLayout {
                     }),
                 ),
             )
-            .child(TITLE)
+            .child("Root")
             .child(self.0.clone())
     }
 }
