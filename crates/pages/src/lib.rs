@@ -1,23 +1,129 @@
 pub use gpui;
-use gpui::{AnyView, App, Application, Context, Global, IntoElement, Render, Window, div};
+use gpui::{
+    AnyView, App, AppContext, Application, Context, Entity, Global, IntoElement, ParentElement,
+    Render, Window, WindowOptions, div,
+};
+pub use pages_macros::include_pages;
+mod transition;
+use transition::Transition;
+pub use transition::{PageAnimation, PageOptions, PagesConfig};
 
 struct PagesEnabled;
 
 impl Global for PagesEnabled {}
 
 pub trait ApplicationExt {
-    fn use_pages(self) -> Self;
+    fn use_pages(self) -> PagesApplication;
 }
 
 impl ApplicationExt for Application {
-    fn use_pages(self) -> Self {
-        self.update(|cx| cx.set_global(PagesEnabled));
-        self
+    fn use_pages(self) -> PagesApplication {
+        PagesApplication {
+            application: self,
+            config: PagesConfig::default(),
+        }
     }
 }
 
+pub struct PagesApplication {
+    application: Application,
+    config: PagesConfig,
+}
+
+impl PagesApplication {
+    pub fn configure(mut self, config: PagesConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    pub fn routes(self, routes: &'static [Route]) -> RoutedApplication {
+        RoutedApplication {
+            application: self,
+            routes,
+        }
+    }
+
+    pub fn run_with(self, launch: impl FnOnce(&mut App) + 'static) {
+        self.application.run(move |cx| {
+            cx.set_global(PagesEnabled);
+            launch(cx);
+        });
+    }
+}
+
+pub struct RoutedApplication {
+    application: PagesApplication,
+    routes: &'static [Route],
+}
+
+impl RoutedApplication {
+    pub fn run(self) {
+        let config = self.application.config;
+        self.application.run_with(move |cx| {
+            let manager = match PageManager::with_config(self.routes, "/", config, cx) {
+                Ok(manager) => cx.new(|_| manager),
+                Err(error) => {
+                    eprintln!("{error}");
+                    cx.quit();
+                    return;
+                }
+            };
+            match cx.open_window(WindowOptions::default(), |_, cx| {
+                cx.new(|_| PagesRoot { manager })
+            }) {
+                Ok(_) => cx.activate(true),
+                Err(error) => {
+                    eprintln!("{error}");
+                    cx.quit();
+                }
+            }
+        });
+    }
+}
+
+struct PagesRoot {
+    manager: Entity<PageManager>,
+}
+
+impl Render for PagesRoot {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child(self.manager.clone())
+    }
+}
+
+pub fn router(window: &Window, cx: &App) -> Option<Entity<PageManager>> {
+    let root = window.root::<PagesRoot>().flatten()?;
+    Some(root.read(cx).manager.clone())
+}
+
 pub trait PageLayout: Render {
+    fn new(child: AnyView) -> Self;
     fn set_child(&mut self, child: AnyView);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
+}
+
+pub trait Page: Render + Default {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
+
+    fn options() -> PageOptions {
+        PageOptions::default()
+    }
+}
+
+pub fn mount_page<P: Page>(cx: &mut App) -> AnyView {
+    cx.new(|_| P::default()).into()
+}
+
+pub fn mount_layout<L: PageLayout>(child: AnyView, cx: &mut App) -> MountedLayout {
+    MountedLayout::new(L::new(child), cx)
+}
+
+pub mod prelude {
+    pub use crate::{
+        ApplicationExt, Page, PageAnimation, PageLayout, PageOptions, PagesConfig, include_pages,
+        router,
+    };
+    pub use gpui::{AnyView, Context, IntoElement, Window, div, prelude::*};
 }
 
 type UpdateChild = Box<dyn Fn(AnyView, &mut App)>;
@@ -51,6 +157,7 @@ pub struct Route {
     pub path: &'static str,
     pub mount: fn(&mut App) -> AnyView,
     pub layouts: &'static [Layout],
+    pub options: fn() -> PageOptions,
 }
 
 #[derive(Debug)]
@@ -75,6 +182,11 @@ pub struct PageManager {
     active: &'static Route,
     layouts: Vec<MountedLayout>,
     view: AnyView,
+    page: AnyView,
+    config: PagesConfig,
+    transition: Option<Entity<Transition>>,
+    history: Vec<&'static Route>,
+    history_index: usize,
 }
 
 impl PageManager {
@@ -83,16 +195,38 @@ impl PageManager {
         path: &str,
         cx: &mut App,
     ) -> Result<Self, NavigationError> {
+        Self::with_config(routes, path, PagesConfig::default(), cx)
+    }
+
+    fn with_config(
+        routes: &'static [Route],
+        path: &str,
+        config: PagesConfig,
+        cx: &mut App,
+    ) -> Result<Self, NavigationError> {
         if cx.try_global::<PagesEnabled>().is_none() {
             return Err(NavigationError::Disabled);
         }
         let active = find_route(routes, path)?;
-        let (view, layouts) = mount_branch(active, 0, cx);
+        let page = (active.mount)(cx);
+        let transition = (!cx.reduce_motion())
+            .then(|| (active.options)().effect(config, true))
+            .flatten()
+            .map(|effect| Transition::mount(page.clone(), Some(effect), None, cx));
+        let content = transition
+            .clone()
+            .map_or_else(|| page.clone(), AnyView::from);
+        let (view, layouts) = mount_layouts(active, 0, content, cx);
         Ok(Self {
             routes,
             active,
             layouts,
             view,
+            page,
+            config,
+            transition,
+            history: vec![active],
+            history_index: 0,
         })
     }
 
@@ -101,6 +235,47 @@ impl PageManager {
         if self.active.path == route.path {
             return Ok(());
         }
+        self.history.truncate(self.history_index + 1);
+        self.history.push(route);
+        self.history_index += 1;
+        self.activate(route, cx);
+        Ok(())
+    }
+
+    pub fn replace(&mut self, path: &str, cx: &mut Context<Self>) -> Result<(), NavigationError> {
+        let route = find_route(self.routes, path)?;
+        self.history[self.history_index] = route;
+        self.activate(route, cx);
+        Ok(())
+    }
+
+    pub fn current_path(&self) -> &'static str {
+        self.active.path
+    }
+
+    pub fn back(&mut self, cx: &mut Context<Self>) -> bool {
+        self.history_index
+            .checked_sub(1)
+            .is_some_and(|index| self.go_to(index, cx))
+    }
+
+    pub fn forward(&mut self, cx: &mut Context<Self>) -> bool {
+        self.go_to(self.history_index + 1, cx)
+    }
+
+    fn go_to(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
+        let Some(&route) = self.history.get(index) else {
+            return false;
+        };
+        self.history_index = index;
+        self.activate(route, cx);
+        true
+    }
+
+    fn activate(&mut self, route: &'static Route, cx: &mut Context<Self>) {
+        if self.active.path == route.path {
+            return;
+        }
         let shared = self
             .active
             .layouts
@@ -108,8 +283,26 @@ impl PageManager {
             .zip(route.layouts)
             .take_while(|(old, new)| old.id == new.id)
             .count();
+        if let Some(transition) = self.transition.take() {
+            transition.update(cx, Transition::finish);
+        }
+        let outgoing = self
+            .layouts
+            .get(shared)
+            .map_or_else(|| self.page.clone(), |layout| layout.view.clone());
         self.layouts.truncate(shared);
-        let (view, layouts) = mount_branch(route, shared, cx);
+        let page = (route.mount)(cx);
+        let (mut view, layouts) = mount_layouts(route, shared, page.clone(), cx);
+        if !cx.reduce_motion() {
+            let opening = (route.options)().effect(self.config, true);
+            let closing = (self.active.options)().effect(self.config, false);
+            if opening.is_some() || closing.is_some() {
+                let transition =
+                    Transition::mount(view, opening, closing.map(|effect| (outgoing, effect)), cx);
+                view = transition.clone().into();
+                self.transition = Some(transition);
+            }
+        }
         if let Some(layout) = self.layouts.last() {
             (layout.update_child)(view, cx);
         } else {
@@ -117,8 +310,8 @@ impl PageManager {
         }
         self.layouts.extend(layouts);
         self.active = route;
+        self.page = page;
         cx.notify();
-        Ok(())
     }
 }
 
@@ -135,8 +328,12 @@ fn find_route(routes: &'static [Route], path: &str) -> Result<&'static Route, Na
         .ok_or_else(|| NavigationError::UnknownRoute(path.to_owned()))
 }
 
-fn mount_branch(route: &Route, shared: usize, cx: &mut App) -> (AnyView, Vec<MountedLayout>) {
-    let mut view = (route.mount)(cx);
+fn mount_layouts(
+    route: &Route,
+    shared: usize,
+    mut view: AnyView,
+    cx: &mut App,
+) -> (AnyView, Vec<MountedLayout>) {
     let mut layouts = Vec::new();
     for layout in route.layouts[shared..].iter().rev() {
         let mounted = (layout.mount)(view, cx);

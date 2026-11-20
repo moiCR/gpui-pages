@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [lib]
-name = "pages_codegen"
+name = "pages_macros"
 path = "src/lib.rs"
 proc-macro = true
 

@@ -1,83 +1,99 @@
-use gpui_pages::{
-    ApplicationExt, PageManager,
-    gpui::{
-        AnyView, App, Context, Entity, IntoElement, Render, Window, WindowOptions, div, prelude::*,
-    },
-};
+use gpui_pages::prelude::*;
 
-include!(concat!(env!("OUT_DIR"), "/pages.rs"));
+include_pages!();
 
 fn main() {
-    gpui_platform::application().use_pages().run(|cx| {
-        let manager = match PageManager::new(PAGE_ROUTES, "/dashboard/analytics", cx) {
-            Ok(manager) => cx.new(|_| manager),
-            Err(error) => {
-                eprintln!("{error}");
-                return;
-            }
-        };
-        if let Err(error) = cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|_| Demo { manager })
-        }) {
-            eprintln!("{error}");
-            return;
-        }
-        cx.activate(true);
-    });
-}
-
-struct Demo {
-    manager: Entity<PageManager>,
-}
-
-impl Render for Demo {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .p_4()
-            .child(
-                div().flex().gap_4().children(
-                    [
-                        ("/dashboard/analytics", "Analytics"),
-                        ("/dashboard/users", "Users"),
-                    ]
-                    .map(|(route, label)| {
-                        div()
-                            .id(route)
-                            .cursor_pointer()
-                            .child(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.manager.update(cx, |manager, cx| {
-                                    if let Err(error) = manager.navigate(route, cx) {
-                                        eprintln!("{error}");
-                                    }
-                                });
-                            }))
-                    }),
-                ),
-            )
-            .child(self.manager.clone())
-    }
-}
-
-struct Title(&'static str);
-
-impl Render for Title {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().text_xl().child(self.0)
-    }
-}
-
-fn mount_title(title: &'static str, cx: &mut App) -> AnyView {
-    cx.new(|_| Title(title)).into()
+    gpui_platform::application()
+        .use_pages()
+        .routes(PAGE_ROUTES)
+        .run();
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ROUTES, pages};
+    use super::{PAGE_ROUTES, ROUTES, pages};
+    use gpui_pages::{
+        ApplicationExt, Layout, NavigationError, PageManager, PageOptions, Route, gpui::AppContext,
+        mount_layout, mount_page,
+    };
+    use std::cell::Cell;
+
+    thread_local! {
+        static DASHBOARD_MOUNTS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    const TRACKED_LAYOUTS: &[Layout] = &[
+        Layout {
+            id: "root",
+            mount: mount_layout::<pages::layout::RootLayout>,
+        },
+        Layout {
+            id: "dashboard",
+            mount: |child, cx| {
+                DASHBOARD_MOUNTS.with(|count| count.set(count.get() + 1));
+                mount_layout::<pages::dashboard::layout::DashboardLayout>(child, cx)
+            },
+        },
+    ];
+
+    #[test]
+    fn reuses_dashboard_layout_between_sibling_routes() {
+        const ROUTES: &[Route] = &[
+            Route {
+                path: "/juanito",
+                mount: mount_page::<pages::dashboard::juanito::JuanitoPage>,
+                options: PageOptions::default,
+                layouts: TRACKED_LAYOUTS,
+            },
+            Route {
+                path: "/settings",
+                mount: mount_page::<pages::dashboard::settings::SettingsPage>,
+                options: PageOptions::default,
+                layouts: TRACKED_LAYOUTS,
+            },
+        ];
+        gpui_platform::headless().use_pages().run_with(|cx| {
+            cx.quit();
+            DASHBOARD_MOUNTS.with(|count| count.set(0));
+            let manager = PageManager::new(ROUTES, "/juanito", cx).expect("mount Juanito");
+            cx.new(|_| manager).update(cx, |manager, cx| {
+                manager
+                    .navigate("/settings", cx)
+                    .expect("navigate to Settings");
+                assert!(matches!(
+                    manager.navigate("/missing", cx),
+                    Err(NavigationError::UnknownRoute(_))
+                ));
+                assert_eq!(manager.current_path(), "/settings");
+                assert!(manager.back(cx));
+                assert_eq!(manager.current_path(), "/juanito");
+                assert!(manager.forward(cx));
+                assert_eq!(manager.current_path(), "/settings");
+                manager.replace("/juanito", cx).expect("replace Settings");
+                assert_eq!(manager.current_path(), "/juanito");
+                assert!(manager.back(cx));
+                assert!(manager.forward(cx));
+                assert_eq!(manager.current_path(), "/juanito");
+                assert!(!manager.forward(cx));
+            });
+            DASHBOARD_MOUNTS.with(|count| assert_eq!(count.get(), 1));
+            let manager =
+                PageManager::new(PAGE_ROUTES, "/", cx).expect("mount the generated index");
+            cx.new(|_| manager).update(cx, |manager, cx| {
+                manager
+                    .navigate("/profile", cx)
+                    .expect("start opening Profile");
+                manager
+                    .navigate("/dashboard/settings", cx)
+                    .expect("interrupt the Profile transition");
+                assert_eq!(manager.current_path(), "/dashboard/settings");
+            });
+        });
+    }
 
     #[test]
     fn compiles_page_modules_and_inherits_layouts() {
-        assert_eq!(pages::dashboard::analytics::TITLE, "Analytics");
+        let _ = pages::dashboard::juanito::JuanitoPage;
         let routes: Vec<_> = ROUTES
             .iter()
             .map(|route| (route.path, route.page, route.layouts))
@@ -87,22 +103,16 @@ mod tests {
         assert_eq!(
             routes,
             [
-                ("/", "pages::__gpui_pages_index", root),
+                ("/", "pages", root),
+                ("/dashboard", "pages::dashboard", dashboard),
+                ("/dashboard/juanito", "pages::dashboard::juanito", dashboard),
                 (
-                    "/dashboard",
-                    "pages::dashboard::__gpui_pages_index",
+                    "/dashboard/settings",
+                    "pages::dashboard::settings",
                     dashboard
                 ),
-                (
-                    "/dashboard/analytics",
-                    "pages::dashboard::analytics",
-                    dashboard
-                ),
-                ("/dashboard/users", "pages::dashboard::users", dashboard),
-                ("/settings", "pages::settings", root),
-                ("/type", "pages::type", root),
+                ("/profile", "pages::profile", root),
             ]
         );
-        assert_eq!(pages::r#type::TITLE, "Type");
     }
 }

@@ -1,24 +1,49 @@
 pub const TITLE: &str = "Root";
 
 use gpui_pages::{
-    MountedLayout, PageLayout,
-    gpui::{AnyView, App, Context, IntoElement, Render, Window, div, prelude::*},
+    PageLayout,
+    gpui::{AnyView, Context, IntoElement, Window, div, prelude::*},
+    router,
 };
 
-struct RootLayout(AnyView);
+pub(crate) struct RootLayout(AnyView);
 
 impl PageLayout for RootLayout {
+    fn new(child: AnyView) -> Self {
+        Self(child)
+    }
+
     fn set_child(&mut self, child: AnyView) {
         self.0 = child;
     }
-}
-
-impl Render for RootLayout {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().mt_4().child(TITLE).child(self.0.clone())
+        div()
+            .p_4()
+            .child(
+                div().flex().gap_4().children(
+                    [
+                        ("/", "Home"),
+                        ("/dashboard", "Dashboard"),
+                        ("/dashboard/juanito", "Juanito"),
+                        ("/dashboard/settings", "Settings"),
+                        ("/profile", "Profile"),
+                    ]
+                    .map(|(path, label)| {
+                        div().id(path).cursor_pointer().child(label).on_click(
+                            move |_, window, cx| {
+                                if let Some(manager) = router(window, cx) {
+                                    manager.update(cx, |manager, cx| {
+                                        if let Err(error) = manager.navigate(path, cx) {
+                                            eprintln!("{error}");
+                                        }
+                                    });
+                                }
+                            },
+                        )
+                    }),
+                ),
+            )
+            .child(TITLE)
+            .child(self.0.clone())
     }
-}
-
-pub fn mount(child: AnyView, cx: &mut App) -> MountedLayout {
-    MountedLayout::new(RootLayout(child), cx)
 }

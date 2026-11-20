@@ -30,7 +30,7 @@ pub struct RouteNode {
 impl RouteNode {
     pub fn discover(crate_root: impl AsRef<Path>) -> Result<Self, DiscoveryError> {
         let mut root = Self::default();
-        root.scan(&crate_root.as_ref().join("src/pages"), "/")?;
+        root.scan(&crate_root.as_ref().join(crate::VIEWS_DIR), "/")?;
         Ok(root)
     }
 
@@ -87,36 +87,19 @@ impl RouteNode {
                     .entry(segment.to_owned())
                     .or_default()
                     .scan(&path, &child_route)?;
-            } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
-                match path.file_stem().and_then(|stem| stem.to_str()) {
-                    Some("mod") => self.set_page(route.to_owned(), path)?,
-                    Some("layout") => self.layout = Some(NodeLayout { source: path }),
-                    _ => {
-                        let segment = route_segment(&path, path.file_stem())?;
-                        let child_route = join_route(route, segment);
-                        self.children
-                            .entry(segment.to_owned())
-                            .or_default()
-                            .set_page(child_route, path)?;
+            } else if kind.is_file() {
+                match path.file_name().and_then(|name| name.to_str()) {
+                    Some("mod.rs") => {
+                        self.page = Some(Route {
+                            path: route.to_owned(),
+                            source: path,
+                        })
                     }
+                    Some("layout.rs") => self.layout = Some(NodeLayout { source: path }),
+                    _ => {}
                 }
             }
         }
-        Ok(())
-    }
-
-    fn set_page(&mut self, route: String, source: PathBuf) -> Result<(), DiscoveryError> {
-        if let Some(existing) = &self.page {
-            return Err(DiscoveryError::Conflict {
-                route,
-                first: existing.source.clone(),
-                second: source,
-            });
-        }
-        self.page = Some(Route {
-            path: route,
-            source,
-        });
         Ok(())
     }
 }
@@ -147,16 +130,8 @@ fn join_route(parent: &str, segment: &str) -> String {
 
 #[derive(Debug)]
 pub enum DiscoveryError {
-    Read {
-        path: PathBuf,
-        source: io::Error,
-    },
+    Read { path: PathBuf, source: io::Error },
     InvalidName(PathBuf),
-    Conflict {
-        route: String,
-        first: PathBuf,
-        second: PathBuf,
-    },
 }
 
 impl fmt::Display for DiscoveryError {
@@ -165,18 +140,8 @@ impl fmt::Display for DiscoveryError {
             Self::Read { path, source } => write!(f, "cannot scan {}: {source}", path.display()),
             Self::InvalidName(path) => write!(
                 f,
-                "invalid page or directory name at {}: use an ASCII identifier compatible with a Rust module",
+                "invalid route directory name at {}: use an ASCII identifier compatible with a Rust module",
                 path.display()
-            ),
-            Self::Conflict {
-                route,
-                first,
-                second,
-            } => write!(
-                f,
-                "route {route} is defined by both {} and {}",
-                first.display(),
-                second.display()
             ),
         }
     }

@@ -12,11 +12,44 @@ static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 #[test]
 fn generates_reproducible_rust() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
-    fixture.add("mod.rs")?;
-    fixture.add("type.rs")?;
+    fs::write(
+        fixture.add("mod.rs")?,
+        "pub struct Home; impl gpui_pages::Page for Home {}",
+    )?;
+    fs::write(
+        fixture.add("type/mod.rs")?,
+        "pub(crate) struct ArbitraryName; impl Page for ArbitraryName {}",
+    )?;
     let generated = generate(&fixture.0)?;
     assert_eq!(generated, generate(&fixture.0)?);
-    assert!(generated.contains("pub mod r#type;"));
+    assert!(generated.contains("pub mod r#type {"));
+    assert!(generated.contains("r#pages::r#type::ArbitraryName"));
+    Ok(())
+}
+
+#[test]
+fn rejects_missing_ambiguous_and_unsupported_page_implementations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let page = fixture.add("mod.rs")?;
+    for (source, message) in [
+        ("pub struct Home;", "expected one top-level"),
+        (
+            "pub struct A; pub struct B; impl Page for A {} impl Page for B {}",
+            "multiple",
+        ),
+        ("struct Home; impl Page for Home {}", "non-generic pub"),
+        (
+            "pub struct Home<T>(T); impl<T> Page for Home<T> {}",
+            "non-generic pub",
+        ),
+    ] {
+        fs::write(&page, source)?;
+        assert!(
+            matches!(generate(&fixture.0), Err(GenerateError::InvalidComponent { path, reason })
+            if path == page && reason.contains(message))
+        );
+    }
     Ok(())
 }
 
@@ -24,10 +57,60 @@ fn generates_reproducible_rust() -> Result<(), Box<dyn std::error::Error>> {
 fn rejects_index_module_collisions() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
     let index = fixture.add("mod.rs")?;
-    fixture.add("__gpui_pages_index.rs")?;
+    fixture.add("__gpui_pages_index/mod.rs")?;
     assert!(
         matches!(generate(&fixture.0), Err(GenerateError::IndexCollision(path)) if path == index)
     );
+    Ok(())
+}
+
+#[test]
+fn rejects_collisions_between_page_types_and_child_modules()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let page = fixture.add("mod.rs")?;
+    fs::write(&page, "pub struct Dashboard; impl Page for Dashboard {}")?;
+    fixture.add("Dashboard/mod.rs")?;
+    assert!(
+        matches!(generate(&fixture.0), Err(GenerateError::InvalidComponent { path, reason })
+        if path == page && reason.contains("conflicts with a generated module"))
+    );
+    Ok(())
+}
+
+#[test]
+fn generates_updated_routes_as_directories_and_layouts_change()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    fs::write(
+        fixture.add("mod.rs")?,
+        "pub struct Home; impl Page for Home {}",
+    )?;
+    assert!(!generate(&fixture.0)?.contains("path: \"/account\""));
+
+    let page = fixture.add("account/mod.rs")?;
+    fs::write(&page, "pub struct Account; impl Page for Account {}")?;
+    let layout = fixture.add("account/layout.rs")?;
+    fs::write(&layout, "pub struct Shell; impl PageLayout for Shell {}")?;
+    let mut watched = Vec::new();
+    let generated = crate::generate::generate_tracking(&fixture.0, |path| {
+        watched.push(path.to_owned());
+    })?;
+    assert!(watched.contains(&page));
+    assert!(watched.contains(&layout));
+    assert!(generated.contains("path: \"/account\""));
+    assert!(generated.contains("pages::account::layout"));
+
+    fs::remove_file(layout)?;
+    assert!(!generate(&fixture.0)?.contains("pages::account::layout"));
+    let pages = fixture.0.join("src/pages");
+    fs::rename(pages.join("account"), pages.join("profile"))?;
+    let generated = generate(&fixture.0)?;
+    assert!(!generated.contains("path: \"/account\""));
+    assert!(generated.contains("path: \"/profile\""));
+    fs::remove_file(pages.join("profile/mod.rs"))?;
+    fs::remove_dir(pages.join("profile"))?;
+    assert!(!generate(&fixture.0)?.contains("path: \"/profile\""));
     Ok(())
 }
 
@@ -62,11 +145,11 @@ impl Drop for Fixture {
 #[test]
 fn discovers_pages_and_nested_layouts_in_sorted_order() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
-    let users = fixture.add("dashboard/users.rs")?;
-    let settings = fixture.add("settings.rs")?;
+    let users = fixture.add("dashboard/users/mod.rs")?;
+    let settings = fixture.add("settings/mod.rs")?;
     let root_page = fixture.add("mod.rs")?;
     let dashboard_page = fixture.add("dashboard/mod.rs")?;
-    let analytics = fixture.add("dashboard/analytics.rs")?;
+    let analytics = fixture.add("dashboard/analytics/mod.rs")?;
     let root_layout = fixture.add("layout.rs")?;
     let dashboard_layout = fixture.add("dashboard/layout.rs")?;
     fixture.add("notes.txt")?;
@@ -119,10 +202,10 @@ fn resolves_layouts_for_each_page_without_leaking_across_branches()
     let reports_layout = fixture.add("dashboard/reports/layout.rs")?;
     fixture.add("mod.rs")?;
     fixture.add("dashboard/mod.rs")?;
-    fixture.add("dashboard/analytics.rs")?;
-    fixture.add("dashboard/reports/monthly.rs")?;
-    fixture.add("dashboard/users.rs")?;
-    fixture.add("settings.rs")?;
+    fixture.add("dashboard/analytics/mod.rs")?;
+    fixture.add("dashboard/reports/monthly/mod.rs")?;
+    fixture.add("dashboard/users/mod.rs")?;
+    fixture.add("settings/mod.rs")?;
 
     let root = RouteNode::discover(&fixture.0)?;
     let table = root.route_table();
@@ -160,27 +243,33 @@ fn resolves_layouts_for_each_page_without_leaking_across_branches()
 }
 
 #[test]
-fn reports_both_sources_of_a_duplicate_route() -> Result<(), Box<dyn std::error::Error>> {
+fn ignores_standalone_pages_and_auxiliary_files() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
-    let first = fixture.add("dashboard/mod.rs")?;
-    let second = fixture.add("dashboard.rs")?;
-    assert!(matches!(generate(&fixture.0), Err(GenerateError::Discover(
-        DiscoveryError::Conflict { route, .. }
-    )) if route == "/dashboard"));
-    assert!(
-        matches!(RouteNode::discover(&fixture.0), Err(DiscoveryError::Conflict {
-            route, first: actual_first, second: actual_second,
-        }) if route == "/dashboard" && actual_first == first && actual_second == second)
-    );
+    let dashboard = fixture.add("dashboard/mod.rs")?;
+    fs::write(
+        &dashboard,
+        "pub struct Dashboard; impl Page for Dashboard {}",
+    )?;
+    fixture.add("dashboard.rs")?;
+    fixture.add("dashboard/components.rs")?;
+    fixture.add("dashboard/helpers.rs")?;
+    fixture.add("dashboard/state.rs")?;
+    fixture.add("standalone.rs")?;
+    let root = RouteNode::discover(&fixture.0)?;
+    let table = root.route_table();
+    assert_eq!(table.len(), 1);
+    assert_eq!(table[0].page.path, "/dashboard");
+    assert_eq!(table[0].page.source, dashboard);
+    assert!(!generate(&fixture.0)?.contains("standalone.rs"));
     Ok(())
 }
 
 #[test]
 fn reports_the_path_of_an_invalid_page_name() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
-    let invalid = fixture.add("bad-name.rs")?;
+    let invalid = fixture.add("bad-name/mod.rs")?;
     assert!(
-        matches!(RouteNode::discover(&fixture.0), Err(DiscoveryError::InvalidName(path)) if path == invalid)
+        matches!(RouteNode::discover(&fixture.0), Err(DiscoveryError::InvalidName(path)) if Some(path.as_path()) == invalid.parent())
     );
     Ok(())
 }
