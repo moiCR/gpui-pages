@@ -11,4 +11,3 @@ path = "src/lib.rs"
 proc-macro = true
 
 [dependencies]
-pages_macros = { path = "../macros" }
