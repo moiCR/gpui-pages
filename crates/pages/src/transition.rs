@@ -19,6 +19,7 @@ pub enum PageAnimation {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PageOptions {
     pub(crate) title: Option<&'static str>,
+    pub(crate) omit_root_layout: bool,
     open: Option<PageAnimation>,
     close: Option<PageAnimation>,
     duration: Option<Duration>,
@@ -26,6 +27,11 @@ pub struct PageOptions {
 }
 
 impl PageOptions {
+    pub fn without_root_layout(mut self) -> Self {
+        self.omit_root_layout = true;
+        self
+    }
+
     pub fn title(mut self, title: &'static str) -> Self {
         self.title = Some(title);
         self

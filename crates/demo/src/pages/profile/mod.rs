@@ -9,6 +9,7 @@ impl Page for ProfilePage {
             .title("Profile")
             .on_open(PageAnimation::SlideFade)
             .on_close(PageAnimation::Fade)
+            .without_root_layout()
     }
 
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {

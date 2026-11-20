@@ -86,10 +86,14 @@ pub(crate) fn generate_tracking(
         ));
         for layout in &entry.layouts {
             let id = module_for(&modules, &layout.source)?;
+            let is_root = root
+                .layout
+                .as_ref()
+                .is_some_and(|root| root.source == layout.source);
             let module = rust_module(id);
             let layout_type = component_for(&modules, &layout.source)?;
             output.push_str(&format!(
-                "::gpui_pages::Layout {{ id: {id:?}, mount: ::gpui_pages::mount_layout::<{module}::{layout_type}> }},"
+                "::gpui_pages::Layout {{ id: {id:?}, is_root: {is_root}, mount: ::gpui_pages::mount_layout::<{module}::{layout_type}> }},"
             ));
         }
         output.push_str("] },\n");

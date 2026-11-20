@@ -20,16 +20,22 @@ mod tests {
     use std::cell::Cell;
 
     thread_local! {
+        static ROOT_MOUNTS: Cell<usize> = const { Cell::new(0) };
         static DASHBOARD_MOUNTS: Cell<usize> = const { Cell::new(0) };
     }
 
     const TRACKED_LAYOUTS: &[Layout] = &[
         Layout {
             id: "root",
-            mount: mount_layout::<pages::layout::RootLayout>,
+            is_root: true,
+            mount: |child, cx| {
+                ROOT_MOUNTS.with(|count| count.set(count.get() + 1));
+                mount_layout::<pages::layout::RootLayout>(child, cx)
+            },
         },
         Layout {
             id: "dashboard",
+            is_root: false,
             mount: |child, cx| {
                 DASHBOARD_MOUNTS.with(|count| count.set(count.get() + 1));
                 mount_layout::<pages::dashboard::layout::DashboardLayout>(child, cx)
@@ -50,6 +56,12 @@ mod tests {
                 path: "/settings",
                 mount: mount_page::<pages::dashboard::settings::SettingsPage>,
                 options: PageOptions::default,
+                layouts: TRACKED_LAYOUTS,
+            },
+            Route {
+                path: "/bare",
+                mount: mount_page::<pages::dashboard::settings::SettingsPage>,
+                options: || PageOptions::default().without_root_layout(),
                 layouts: TRACKED_LAYOUTS,
             },
         ];
@@ -78,6 +90,16 @@ mod tests {
                 assert!(!manager.forward(cx));
             });
             DASHBOARD_MOUNTS.with(|count| assert_eq!(count.get(), 1));
+            ROOT_MOUNTS.with(|count| assert_eq!(count.get(), 1));
+            let bare = PageManager::new(ROUTES, "/bare", cx).expect("mount without root");
+            ROOT_MOUNTS.with(|count| assert_eq!(count.get(), 1));
+            DASHBOARD_MOUNTS.with(|count| assert_eq!(count.get(), 2));
+            cx.new(|_| bare).update(cx, |manager, cx| {
+                manager.navigate("/settings", cx).expect("restore root");
+                assert!(manager.back(cx));
+            });
+            ROOT_MOUNTS.with(|count| assert_eq!(count.get(), 2));
+            DASHBOARD_MOUNTS.with(|count| assert_eq!(count.get(), 4));
             let manager =
                 PageManager::new(PAGE_ROUTES, "/", cx).expect("mount the generated index");
             cx.new(|_| manager).update(cx, |manager, cx| {

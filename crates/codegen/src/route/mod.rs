@@ -72,6 +72,7 @@ impl RouteNode {
             .collect::<Result<Vec<_>, _>>()
             .map_err(directory_error)?;
         entries.sort_by_cached_key(fs::DirEntry::file_name);
+        let mut dynamic_directory = None;
 
         for entry in entries {
             let path = entry.path();
@@ -82,7 +83,29 @@ impl RouteNode {
 
             if kind.is_dir() {
                 let segment = route_segment(&path, path.file_name())?;
-                let child_route = join_route(route, segment);
+                let child_route = if let Some(parameter) = segment.strip_prefix('_') {
+                    if !parameter.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                        return Err(DiscoveryError::InvalidName(path));
+                    }
+                    if route
+                        .split('/')
+                        .any(|part| part.strip_prefix(':') == Some(parameter))
+                    {
+                        return Err(DiscoveryError::RepeatedParameter {
+                            path,
+                            parameter: parameter.to_owned(),
+                        });
+                    }
+                    if let Some(first) = dynamic_directory.replace(path.clone()) {
+                        return Err(DiscoveryError::AmbiguousParameters {
+                            first,
+                            second: path,
+                        });
+                    }
+                    join_route(route, &format!(":{parameter}"))
+                } else {
+                    join_route(route, segment)
+                };
                 self.children
                     .entry(segment.to_owned())
                     .or_default()
@@ -132,6 +155,8 @@ fn join_route(parent: &str, segment: &str) -> String {
 pub enum DiscoveryError {
     Read { path: PathBuf, source: io::Error },
     InvalidName(PathBuf),
+    RepeatedParameter { path: PathBuf, parameter: String },
+    AmbiguousParameters { first: PathBuf, second: PathBuf },
 }
 
 impl fmt::Display for DiscoveryError {
@@ -142,6 +167,19 @@ impl fmt::Display for DiscoveryError {
                 f,
                 "invalid route directory name at {}: use an ASCII identifier compatible with a Rust module",
                 path.display()
+            ),
+            Self::RepeatedParameter { path, parameter } => {
+                write!(
+                    f,
+                    "{} repeats the route parameter {parameter}",
+                    path.display()
+                )
+            }
+            Self::AmbiguousParameters { first, second } => write!(
+                f,
+                "ambiguous dynamic route directories {} and {}",
+                first.display(),
+                second.display()
             ),
         }
     }

@@ -62,4 +62,6 @@ Pages can override `Page::options()` with `PageOptions::default().on_open(PageAn
 
 Use `PageOptions::default().title("Profile")` to set a page's window title. Pages without a title use the application title.
 
+Use `PageOptions::default().without_root_layout()` to omit `src/pages/layout.rs` for a page. Nested layouts still apply.
+
 Run `cargo run -p demo` to visit the example. Increment the Dashboard layout counter and switch between Juanito and Settings to see the shared layout retain its state. Open Profile to see a transition.
