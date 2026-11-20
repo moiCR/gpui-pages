@@ -1,6 +1,15 @@
 # gpui-pages
 Directory-based routing for GPUI. Automatically discover and register pages without manual route configuration.
 
+## GPUI Kit version compatibility
+
+| Dependency | Version |
+| --- | --- |
+| `gpui-pre` | `0.3.12` |
+| `gpui-kit` | `0.10.0` |
+
+This pairing uses the default GPUI backend. [GPUI Kit dependency versions](https://docs.rs/crate/gpui-kit/0.10.0)
+
 Add `gpui-pages` and the matching `gpui-pre-platform` backend to the app's dependencies, and add `pages-codegen` to its build dependencies. For a complete workspace example, see `crates/demo/Cargo.toml`.
 
 `build.rs`
