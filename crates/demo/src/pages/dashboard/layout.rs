@@ -11,7 +11,7 @@ pub(crate) struct DashboardLayout {
 }
 
 impl PageLayout for DashboardLayout {
-    fn new(child: AnyView) -> Self {
+    fn new(child: AnyView, _: &mut Context<Self>) -> Self {
         Self { child, count: 0 }
     }
 

@@ -1,4 +1,4 @@
-use crate::route::{DiscoveryError, RouteNode};
+use crate::route::{DiscoveryError, RouteNode, group_name};
 use std::{
     collections::BTreeMap,
     error::Error,
@@ -7,6 +7,14 @@ use std::{
 };
 
 const INDEX: &str = "__gpui_pages_index";
+const GROUP_PREFIX: &str = "__gpui_pages_group_";
+
+fn module_ident(segment: &str) -> String {
+    match group_name(segment) {
+        Some(group) => format!("{GROUP_PREFIX}{group}"),
+        None => segment.to_owned(),
+    }
+}
 
 #[derive(Debug)]
 pub enum GenerateError {
@@ -252,7 +260,10 @@ fn emit_node<'a>(
         let name = component.trim_start_matches("r#");
         if name == INDEX
             || name == "layout" && node.layout.is_some()
-            || node.children.contains_key(name)
+            || node
+                .children
+                .keys()
+                .any(|segment| module_ident(segment) == name)
         {
             return Err(GenerateError::InvalidComponent {
                 path: page.source.clone(),
@@ -274,14 +285,15 @@ fn emit_node<'a>(
     }
     let indent = "    ".repeat(module.matches("::").count());
     for (segment, child) in &node.children {
+        let ident = module_ident(segment);
         if let Some(directory) = relative_directory {
             let child_directory = format!("{directory}{segment}");
             output.push_str(&format!("{indent}#[path = {child_directory:?}]\n"));
         }
-        output.push_str(&format!("{indent}pub mod r#{segment} {{\n"));
+        output.push_str(&format!("{indent}pub mod r#{ident} {{\n"));
         emit_node(
             child,
-            &format!("{module}::{segment}"),
+            &format!("{module}::{ident}"),
             relative_directory.map(|_| ""),
             modules,
             output,

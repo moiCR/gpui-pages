@@ -5,10 +5,13 @@ use gpui_pages::{
 
 mod helpers;
 
-#[derive(Default)]
 pub struct JuanitoPage;
 
 impl Page for JuanitoPage {
+    fn new(_: &mut Context<Self>) -> Self {
+        Self
+    }
+
     fn options() -> gpui_pages::PageOptions {
         gpui_pages::PageOptions::default().title(helpers::TITLE)
     }

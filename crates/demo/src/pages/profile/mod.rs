@@ -1,9 +1,12 @@
 use gpui_pages::prelude::*;
 
-#[derive(Default)]
 pub struct ProfilePage;
 
 impl Page for ProfilePage {
+    fn new(_: &mut Context<Self>) -> Self {
+        Self
+    }
+
     fn options() -> PageOptions {
         PageOptions::default()
             .title("Profile")

@@ -313,3 +313,88 @@ fn reports_the_path_of_an_invalid_page_name() -> Result<(), Box<dyn std::error::
     );
     Ok(())
 }
+
+#[test]
+fn discovers_route_groups_without_adding_url_segments() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let root_layout = fixture.add("layout.rs")?;
+    let auth_layout = fixture.add("(auth)/layout.rs")?;
+    let login = fixture.add("(auth)/login/mod.rs")?;
+    let register = fixture.add("(auth)/register/mod.rs")?;
+    let dashboard = fixture.add("dashboard/mod.rs")?;
+    fs::write(&root_layout, "pub struct Root; impl PageLayout for Root {}")?;
+    fs::write(&auth_layout, "pub struct Auth; impl PageLayout for Auth {}")?;
+    fs::write(&login, "pub struct Login; impl Page for Login {}")?;
+    fs::write(&register, "pub struct Register; impl Page for Register {}")?;
+    fs::write(
+        &dashboard,
+        "pub struct Dashboard; impl Page for Dashboard {}",
+    )?;
+
+    let root = RouteNode::discover(&fixture.0)?;
+    let table = root.route_table();
+    let routes: Vec<_> = table
+        .iter()
+        .map(|entry| {
+            (
+                entry.page.path.as_str(),
+                entry
+                    .layouts
+                    .iter()
+                    .map(|layout| &layout.source)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        routes,
+        [
+            ("/login", vec![&root_layout, &auth_layout]),
+            ("/register", vec![&root_layout, &auth_layout]),
+            ("/dashboard", vec![&root_layout]),
+        ]
+    );
+
+    let generated = crate::generate::generate_tracking(&fixture.0, |_| {})?;
+    assert!(generated.modules.contains("#[path = \"pages/(auth)\"]"));
+    assert!(
+        generated
+            .modules
+            .contains("pub mod r#__gpui_pages_group_auth {")
+    );
+    assert!(generated.registry.contains("path: \"/login\""));
+    assert!(generated.registry.contains("path: \"/register\""));
+    Ok(())
+}
+
+#[test]
+fn rejects_duplicate_and_ambiguous_routes_across_route_groups()
+-> Result<(), Box<dyn std::error::Error>> {
+    let duplicate = Fixture::new()?;
+    let first = duplicate.add("(a)/settings/mod.rs")?;
+    let second = duplicate.add("(b)/settings/mod.rs")?;
+    assert!(matches!(
+        RouteNode::discover(&duplicate.0),
+        Err(DiscoveryError::DuplicateRoute { path, first: left, second: right })
+            if path == "/settings" && left == first && right == second
+    ));
+
+    let ambiguous = Fixture::new()?;
+    let left_page = ambiguous.add("(a)/_id/mod.rs")?;
+    let right_page = ambiguous.add("(b)/_slug/mod.rs")?;
+    assert!(matches!(
+        RouteNode::discover(&ambiguous.0),
+        Err(DiscoveryError::AmbiguousParameters { first, second })
+            if first == left_page && second == right_page
+    ));
+
+    for bad_group in ["()", "(bad-name)", "(mod)", "(layout)"] {
+        let invalid = Fixture::new()?;
+        let page = invalid.add(&format!("{bad_group}/mod.rs"))?;
+        assert!(matches!(
+            RouteNode::discover(&invalid.0),
+            Err(DiscoveryError::InvalidName(path)) if Some(path.as_path()) == page.parent()
+        ));
+    }
+    Ok(())
+}

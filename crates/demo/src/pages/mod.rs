@@ -3,10 +3,13 @@ use gpui_pages::{
     gpui::{Context, IntoElement, Window, div, prelude::*},
 };
 
-#[derive(Default)]
 pub struct HomePage;
 
 impl Page for HomePage {
+    fn new(_: &mut Context<Self>) -> Self {
+        Self
+    }
+
     fn options() -> gpui_pages::PageOptions {
         gpui_pages::PageOptions::default().title("Home")
     }

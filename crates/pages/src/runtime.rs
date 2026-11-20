@@ -12,15 +12,38 @@ struct PagesEnabled;
 
 impl Global for PagesEnabled {}
 
+struct AttachedRouter {
+    manager: WeakEntity<PageManager>,
+    _title_subscription: Subscription,
+}
+
 #[derive(Default)]
-struct WindowRouters(HashMap<WindowId, WeakEntity<PageManager>>);
+struct WindowRouters(HashMap<WindowId, AttachedRouter>);
 
 impl Global for WindowRouters {}
 
-fn register_window_router(window_id: WindowId, manager: &Entity<PageManager>, cx: &mut App) {
+fn register_window_router(window: &mut Window, manager: &Entity<PageManager>, cx: &mut App) {
+    let window_handle = window.window_handle();
+    if let Some(title) = manager.read(cx).current_title() {
+        window.set_window_title(title);
+    }
+    let subscription = cx.observe(manager, move |manager, cx| {
+        let Some(title) = manager.read(cx).current_title() else {
+            return;
+        };
+        let _ = window_handle.update(cx, |_, window, _| {
+            window.set_window_title(title);
+        });
+    });
     let routers = cx.default_global::<WindowRouters>();
-    routers.0.retain(|_, entry| entry.is_upgradable());
-    routers.0.insert(window_id, manager.downgrade());
+    routers.0.retain(|_, entry| entry.manager.is_upgradable());
+    routers.0.insert(
+        window_handle.window_id(),
+        AttachedRouter {
+            manager: manager.downgrade(),
+            _title_subscription: subscription,
+        },
+    );
 }
 
 pub trait ApplicationExt {
@@ -139,16 +162,18 @@ pub fn router(window: &Window, cx: &App) -> Option<Entity<PageManager>> {
     cx.try_global::<WindowRouters>()?
         .0
         .get(&window.window_handle().window_id())?
+        .manager
         .upgrade()
 }
 
 pub trait PageLayout: Render {
-    fn new(child: AnyView) -> Self;
+    fn new(child: AnyView, cx: &mut Context<Self>) -> Self;
     fn set_child(&mut self, child: AnyView);
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
 }
 
-pub trait Page: Render + Default {
+pub trait Page: Render {
+    fn new(cx: &mut Context<Self>) -> Self;
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
 
     fn on_navigate(&mut self, _data: NavigationData, _cx: &mut Context<Self>) {}
@@ -168,7 +193,7 @@ impl NavigationData {
 
 pub fn mount_page<P: Page>(data: Option<NavigationData>, cx: &mut App) -> AnyView {
     cx.new(|cx| {
-        let mut page = P::default();
+        let mut page = P::new(cx);
         if let Some(data) = data {
             page.on_navigate(data, cx);
         }
@@ -178,7 +203,7 @@ pub fn mount_page<P: Page>(data: Option<NavigationData>, cx: &mut App) -> AnyVie
 }
 
 pub fn mount_layout<L: PageLayout>(child: AnyView, cx: &mut App) -> MountedLayout {
-    MountedLayout::new(L::new(child), cx)
+    MountedLayout::new::<L>(child, cx)
 }
 
 pub mod prelude {
@@ -197,8 +222,8 @@ pub struct MountedLayout {
 }
 
 impl MountedLayout {
-    pub fn new<L: PageLayout>(layout: L, cx: &mut App) -> Self {
-        let entity = cx.new(|_| layout);
+    pub fn new<L: PageLayout>(child: AnyView, cx: &mut App) -> Self {
+        let entity = cx.new(|cx| L::new(child, cx));
         Self {
             view: entity.clone().into(),
             update_child: Box::new(move |child, cx| {
@@ -272,19 +297,33 @@ impl PageManager {
         Self::with_config(routes, path, PagesConfig::default(), cx)
     }
 
+    pub fn attach(manager: &Entity<Self>, window: &mut Window, cx: &mut App) {
+        register_window_router(window, manager, cx);
+    }
+
     pub fn mount(
         routes: &'static [Route],
         path: &str,
-        window: &Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Result<Entity<Self>, NavigationError> {
-        let manager = Self::new(routes, path, cx)?;
+        Self::mount_with_config(routes, path, PagesConfig::default(), window, cx)
+    }
+
+    pub fn mount_with_config(
+        routes: &'static [Route],
+        path: &str,
+        config: PagesConfig,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<Entity<Self>, NavigationError> {
+        let manager = Self::with_config(routes, path, config, cx)?;
         let entity = cx.new(|_| manager);
-        register_window_router(window.window_handle().window_id(), &entity, cx);
+        Self::attach(&entity, window, cx);
         Ok(entity)
     }
 
-    fn with_config(
+    pub fn with_config(
         routes: &'static [Route],
         path: &str,
         config: PagesConfig,
@@ -338,13 +377,13 @@ impl PageManager {
         data: Option<NavigationData>,
         cx: &mut Context<Self>,
     ) -> Result<(), NavigationError> {
-        if self.current_path() == path {
+        let route = find_route(self.routes, path)?;
+        if self.active.matches_location(&route) {
             if data.is_some() {
                 self.activate(self.active.clone(), data, cx);
             }
             return Ok(());
         }
-        let route = find_route(self.routes, path)?;
         self.history.truncate(self.history_index + 1);
         self.history.push(route.clone());
         self.history_index += 1;
@@ -353,10 +392,10 @@ impl PageManager {
     }
 
     pub fn replace(&mut self, path: &str, cx: &mut Context<Self>) -> Result<(), NavigationError> {
-        if self.current_path() == path {
+        let route = find_route(self.routes, path)?;
+        if self.active.matches_location(&route) {
             return Ok(());
         }
-        let route = find_route(self.routes, path)?;
         self.history[self.history_index] = route.clone();
         self.activate(route, None, cx);
         Ok(())
@@ -364,6 +403,22 @@ impl PageManager {
 
     pub fn current_path(&self) -> &str {
         &self.active.path
+    }
+
+    pub fn query_string(&self) -> Option<&str> {
+        self.active.query.as_deref()
+    }
+
+    pub fn query(&self, name: &str) -> Option<&str> {
+        self.active
+            .query
+            .as_deref()?
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .find_map(|pair| {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                (key == name).then_some(value)
+            })
     }
 
     pub fn param(&self, name: &str) -> Option<&str> {
@@ -377,6 +432,14 @@ impl PageManager {
 
     pub fn current_title(&self) -> Option<&'static str> {
         (self.active.route.options)().title
+    }
+
+    pub fn can_back(&self) -> bool {
+        self.history_index > 0
+    }
+
+    pub fn can_forward(&self) -> bool {
+        self.history_index + 1 < self.history.len()
     }
 
     pub fn back(&mut self, cx: &mut Context<Self>) -> bool {
@@ -451,15 +514,25 @@ impl Render for PageManager {
 struct RouteMatch {
     route: &'static Route,
     path: Rc<str>,
+    query: Option<Rc<str>>,
 }
 
-fn find_route(routes: &'static [Route], path: &str) -> Result<RouteMatch, NavigationError> {
-    if !path.starts_with('/')
-        || path.contains(['?', '#'])
-        || path.contains("//")
-        || path.len() > 1 && path.ends_with('/')
-    {
-        return Err(NavigationError::UnknownRoute(path.to_owned()));
+impl RouteMatch {
+    fn matches_location(&self, other: &Self) -> bool {
+        self.path == other.path && self.query == other.query
+    }
+}
+
+fn find_route(routes: &'static [Route], raw_path: &str) -> Result<RouteMatch, NavigationError> {
+    if raw_path.contains('#') {
+        return Err(NavigationError::UnknownRoute(raw_path.to_owned()));
+    }
+    let (path, query) = match raw_path.split_once('?') {
+        Some((path, query)) => (path, (!query.is_empty()).then(|| Rc::from(query))),
+        None => (raw_path, None),
+    };
+    if !path.starts_with('/') || path.contains("//") || path.len() > 1 && path.ends_with('/') {
+        return Err(NavigationError::UnknownRoute(raw_path.to_owned()));
     }
     routes
         .iter()
@@ -472,8 +545,9 @@ fn find_route(routes: &'static [Route], path: &str) -> Result<RouteMatch, Naviga
         .map(|route| RouteMatch {
             route,
             path: Rc::from(path),
+            query,
         })
-        .ok_or_else(|| NavigationError::UnknownRoute(path.to_owned()))
+        .ok_or_else(|| NavigationError::UnknownRoute(raw_path.to_owned()))
 }
 
 fn matches_route(pattern: &str, path: &str) -> bool {

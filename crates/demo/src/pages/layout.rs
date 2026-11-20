@@ -7,7 +7,7 @@ use gpui_pages::{
 pub(crate) struct RootLayout(AnyView);
 
 impl PageLayout for RootLayout {
-    fn new(child: AnyView) -> Self {
+    fn new(child: AnyView, _: &mut Context<Self>) -> Self {
         Self(child)
     }
 

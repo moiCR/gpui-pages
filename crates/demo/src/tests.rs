@@ -66,17 +66,25 @@ fn reuses_dashboard_layout_between_sibling_routes() {
         DASHBOARD_MOUNTS.with(|count| count.set(0));
         let manager = PageManager::new(ROUTES, "/juanito", cx).expect("mount Juanito");
         cx.new(|_| manager).update(cx, |manager, cx| {
+            assert!(!manager.can_back());
+            assert!(!manager.can_forward());
             manager
                 .navigate("/settings", cx)
                 .expect("navigate to Settings");
+            assert!(manager.can_back());
+            assert!(!manager.can_forward());
             assert!(matches!(
                 manager.navigate("/missing/extra", cx),
                 Err(NavigationError::UnknownRoute(_))
             ));
             assert_eq!(manager.current_path(), "/settings");
             assert!(manager.back(cx));
+            assert!(!manager.can_back());
+            assert!(manager.can_forward());
             assert_eq!(manager.current_path(), "/juanito");
             assert!(manager.forward(cx));
+            assert!(manager.can_back());
+            assert!(!manager.can_forward());
             assert_eq!(manager.current_path(), "/settings");
             manager.replace("/juanito", cx).expect("replace Settings");
             assert_eq!(manager.current_path(), "/juanito");
@@ -84,11 +92,25 @@ fn reuses_dashboard_layout_between_sibling_routes() {
             assert!(manager.forward(cx));
             assert_eq!(manager.current_path(), "/juanito");
             assert!(!manager.forward(cx));
-            manager.navigate("/42", cx).expect("open item 42");
+            manager
+                .navigate("/42?tab=details&flag", cx)
+                .expect("open item 42");
+            assert_eq!(manager.current_path(), "/42");
             assert_eq!(manager.param("id"), Some("42"));
+            assert_eq!(manager.query("tab"), Some("details"));
+            assert_eq!(manager.query("flag"), Some(""));
+            assert_eq!(manager.query("missing"), None);
+            assert_eq!(manager.query_string(), Some("tab=details&flag"));
+            manager
+                .navigate("/42?tab=logs", cx)
+                .expect("update query on same path");
+            assert_eq!(manager.query("tab"), Some("logs"));
+            assert!(manager.back(cx));
+            assert_eq!(manager.query("tab"), Some("details"));
             manager.navigate("/73", cx).expect("open item 73");
             assert_eq!(manager.current_path(), "/73");
             assert_eq!(manager.param("id"), Some("73"));
+            assert_eq!(manager.query_string(), None);
             assert!(manager.back(cx));
             assert_eq!(manager.current_path(), "/42");
             assert_eq!(manager.param("id"), Some("42"));
@@ -138,14 +160,12 @@ struct RegisterData {
 
 struct RegisterPage;
 
-impl Default for RegisterPage {
-    fn default() -> Self {
+impl Page for RegisterPage {
+    fn new(_: &mut Context<Self>) -> Self {
         REGISTER_MOUNTS.with(|count| count.set(count.get() + 1));
         Self
     }
-}
 
-impl Page for RegisterPage {
     fn on_navigate(&mut self, data: NavigationData, _: &mut Context<Self>) {
         if let Some(data) = data.take::<RegisterData>() {
             REGISTER_DATA.with_borrow_mut(|received| received.push(data));

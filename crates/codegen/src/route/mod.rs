@@ -3,7 +3,7 @@ use crate::layout::NodeLayout;
 mod tests;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fmt, fs, io,
     path::{Path, PathBuf},
 };
@@ -31,7 +31,29 @@ impl RouteNode {
     pub fn discover(crate_root: impl AsRef<Path>) -> Result<Self, DiscoveryError> {
         let mut root = Self::default();
         root.scan(&crate_root.as_ref().join(crate::VIEWS_DIR), "/")?;
+        root.validate_unique_routes()?;
         Ok(root)
+    }
+
+    fn validate_unique_routes(&self) -> Result<(), DiscoveryError> {
+        let mut seen: HashMap<String, &Route> = HashMap::new();
+        for entry in self.route_table() {
+            let normalized = normalize_route(&entry.page.path);
+            if let Some(first) = seen.insert(normalized, entry.page) {
+                if first.path == entry.page.path {
+                    return Err(DiscoveryError::DuplicateRoute {
+                        path: entry.page.path.clone(),
+                        first: first.source.clone(),
+                        second: entry.page.source.clone(),
+                    });
+                }
+                return Err(DiscoveryError::AmbiguousParameters {
+                    first: first.source.clone(),
+                    second: entry.page.source.clone(),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn route_table(&self) -> Vec<RouteEntry<'_>> {
@@ -83,7 +105,9 @@ impl RouteNode {
 
             if kind.is_dir() {
                 let segment = route_segment(&path, path.file_name())?;
-                let child_route = if let Some(parameter) = segment.strip_prefix('_') {
+                let child_route = if is_route_group(segment) {
+                    route.to_owned()
+                } else if let Some(parameter) = segment.strip_prefix('_') {
                     if !parameter.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
                         return Err(DiscoveryError::InvalidName(path));
                     }
@@ -127,13 +151,19 @@ impl RouteNode {
     }
 }
 
-fn route_segment<'a>(
-    path: &Path,
-    name: Option<&'a std::ffi::OsStr>,
-) -> Result<&'a str, DiscoveryError> {
-    if let Some(name) = name.and_then(|name| name.to_str())
-        && let Some((&first, rest)) = name.as_bytes().split_first()
-        && (first.is_ascii_alphabetic() || first == b'_')
+pub(crate) fn group_name(segment: &str) -> Option<&str> {
+    segment.strip_prefix('(')?.strip_suffix(')')
+}
+
+fn is_route_group(segment: &str) -> bool {
+    group_name(segment).is_some()
+}
+
+fn is_valid_segment_ident(name: &str) -> bool {
+    let Some((&first, rest)) = name.as_bytes().split_first() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == b'_')
         && rest
             .iter()
             .all(|&byte| byte.is_ascii_alphanumeric() || byte == b'_')
@@ -141,10 +171,37 @@ fn route_segment<'a>(
             name,
             "_" | "self" | "Self" | "super" | "crate" | "mod" | "layout"
         )
-    {
-        return Ok(name);
+}
+
+fn route_segment<'a>(
+    path: &Path,
+    name: Option<&'a std::ffi::OsStr>,
+) -> Result<&'a str, DiscoveryError> {
+    if let Some(name) = name.and_then(|name| name.to_str()) {
+        if let Some(group) = group_name(name)
+            && is_valid_segment_ident(group)
+        {
+            return Ok(name);
+        }
+        if is_valid_segment_ident(name) {
+            return Ok(name);
+        }
     }
     Err(DiscoveryError::InvalidName(path.to_owned()))
+}
+
+fn normalize_route(route: &str) -> String {
+    route
+        .split('/')
+        .map(|segment| {
+            if segment.starts_with(':') {
+                ":"
+            } else {
+                segment
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn join_route(parent: &str, segment: &str) -> String {
@@ -153,10 +210,24 @@ fn join_route(parent: &str, segment: &str) -> String {
 
 #[derive(Debug)]
 pub enum DiscoveryError {
-    Read { path: PathBuf, source: io::Error },
+    Read {
+        path: PathBuf,
+        source: io::Error,
+    },
     InvalidName(PathBuf),
-    RepeatedParameter { path: PathBuf, parameter: String },
-    AmbiguousParameters { first: PathBuf, second: PathBuf },
+    RepeatedParameter {
+        path: PathBuf,
+        parameter: String,
+    },
+    AmbiguousParameters {
+        first: PathBuf,
+        second: PathBuf,
+    },
+    DuplicateRoute {
+        path: String,
+        first: PathBuf,
+        second: PathBuf,
+    },
 }
 
 impl fmt::Display for DiscoveryError {
@@ -178,6 +249,16 @@ impl fmt::Display for DiscoveryError {
             Self::AmbiguousParameters { first, second } => write!(
                 f,
                 "ambiguous dynamic route directories {} and {}",
+                first.display(),
+                second.display()
+            ),
+            Self::DuplicateRoute {
+                path,
+                first,
+                second,
+            } => write!(
+                f,
+                "duplicate route {path} defined by {} and {}",
                 first.display(),
                 second.display()
             ),
