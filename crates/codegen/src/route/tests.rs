@@ -161,7 +161,7 @@ impl Fixture {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
-            "pages-codegen-{}-{timestamp}-{sequence}",
+            "gpui-pages-codegen-{}-{timestamp}-{sequence}",
             std::process::id()
         ));
         fs::create_dir(&root)?;

@@ -1,12 +1,14 @@
 [package]
-name = "pages-macros"
+name = "gpui-pages-macros"
+description = "Procedural macros for gpui-pages"
+readme.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [lib]
-name = "pages_macros"
+name = "gpui_pages_macros"
 path = "src/lib.rs"
 proc-macro = true
 

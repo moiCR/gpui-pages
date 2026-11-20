@@ -1,29 +1,40 @@
 # gpui-pages
-Directory-based routing for GPUI. Automatically discover and register pages without manual route configuration.
 
-## GPUI Kit version compatibility
+Directory-based routing for GPUI (`gpui-pre`), inspired by Next.js App Router. Automatically discover pages, nested layouts, dynamic segments, and route groups at compile time without manual route tables.
+
+## Features
+
+- **File-based routing**: `src/pages/**/mod.rs` defines routes with deterministic compile-time discovery and validation.
+- **Persistent nested layouts**: `layout.rs` files wrap descendant routes and preserve GPUI entity state across sibling navigations.
+- **Route groups**: `(group)/...` directories share layouts without adding URL segments.
+- **Dynamic segments & query params**: `_id` directories match `:id` parameters; `?key=value` query strings are parsed out of the box.
+- **Navigation, history & in-memory payloads**: `navigate`, `navigate_with`, `replace`, `back`, `forward`, `can_back`, and `can_forward`.
+- **Page transitions & options**: per-page titles, `without_root_layout()`, and `Fade`/`Slide`/`Scale` transitions respecting `reduce_motion`.
+- **Custom window support**: works standalone or embedded inside custom window wrappers such as `gpui-kit`.
+
+## Version Compatibility
 
 | Dependency | Version |
 | --- | --- |
 | `gpui-pre` | `0.3.12` |
 | `gpui-kit` | `0.10.0` |
 
-This pairing uses the default GPUI backend. [GPUI Kit dependency versions](https://docs.rs/crate/gpui-kit/0.10.0)
+## Installation
 
-Add `gpui-pages` and the matching `gpui-pre-platform` backend to the app's dependencies. Enable only the `codegen` feature on the build dependency so the build script can generate routes without compiling the GPUI runtime.
-
-`Cargo.toml`
+Add `gpui-pages` and `gpui-pre-platform` to your dependencies. Enable only the `codegen` feature under `[build-dependencies]` so your build script generates routes without compiling the GPUI runtime.
 
 ```toml
 [dependencies]
-gpui-pages = { git = "https://github.com/moiCR/gpui-pages" }
+gpui-pages = "0.1"
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12" }
 
 [build-dependencies]
-gpui-pages = { git = "https://github.com/moiCR/gpui-pages", default-features = false, features = ["codegen"] }
+gpui-pages = { version = "0.1", default-features = false, features = ["codegen"] }
 ```
 
-`build.rs`
+## Quick Start
+
+### `build.rs`
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`src/main.rs`
+### `src/main.rs`
 
 ```rust
 use gpui_pages::prelude::*;
@@ -51,56 +62,144 @@ fn main() {
 }
 ```
 
-The build script watches `src/pages` and generates `src/pages_modules.rs` with ordinary module declarations so rust-analyzer can index route files. Run `cargo check` once after cloning to create it. You can ignore the generated file in Git. Cargo updates it when the route tree changes. The route registry and generated `Render` implementations go to Cargo's output directory and are included by the macro. The framework opens a GPUI window at `/`.
-
-`src/pages/mod.rs`
+### `src/pages/mod.rs`
 
 ```rust
 use gpui_pages::prelude::*;
 
-#[derive(Default)]
 pub struct HomePage;
 
 impl Page for HomePage {
+    fn new(_: &mut Context<Self>) -> Self {
+        Self
+    }
+
+    fn options() -> PageOptions {
+        PageOptions::default().title("Home")
+    }
+
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().child("Home")
     }
 }
 ```
 
-| Directory index | Route |
+The build script watches `src/pages` and generates `src/pages_modules.rs` with ordinary module declarations so `rust-analyzer` can index all route files. Run `cargo check` once after cloning to generate it (you may ignore `src/pages_modules.rs` in Git). The route registry and generated `Render` implementations are emitted into `OUT_DIR` and included via `include_pages!()`.
+
+## Routing Conventions
+
+| File | Route |
 | --- | --- |
 | `src/pages/mod.rs` | `/` |
 | `src/pages/dashboard/mod.rs` | `/dashboard` |
-| `src/pages/dashboard/juanito/mod.rs` | `/dashboard/juanito` |
-| `src/pages/dashboard/settings/mod.rs` | `/dashboard/settings` |
+| `src/pages/dashboard/_id/mod.rs` | `/dashboard/:id` |
+| `src/pages/(auth)/login/mod.rs` | `/login` |
 | `src/pages/profile/mod.rs` | `/profile` |
 
-Every route comes from a directory containing `mod.rs`. Directories without an index can contain nested routes and inherited layouts. Declare auxiliary files such as `helpers.rs` with ordinary Rust module declarations inside the page. The generator declares the route directories and exposes page types at paths such as `pages::dashboard::juanito::JuanitoPage`.
+- Only `mod.rs` defines a route. Other `.rs` files inside a page directory can be declared as ordinary auxiliary modules (e.g., `mod helpers;`).
+- Directories without `mod.rs` can still contain descendant routes and a `layout.rs`.
+- Each `mod.rs` must contain one top-level `impl Page` for a local, non-generic `pub` or `pub(crate)` struct.
+- Directories wrapped in parentheses such as `(auth)` are **route groups**: they apply their `layout.rs` to descendants without adding a URL segment. Duplicate or ambiguous routes across groups are rejected at compile time.
 
-Each `mod.rs` contains one top-level `impl Page` for a local, non-generic `pub` or `pub(crate)` struct. Qualified trait paths ending in `Page` are accepted. A `layout.rs` has the same visibility convention and implements `PageLayout`, with methods for constructing it with its child, replacing that child, and rendering.
+## Layouts
 
-Get the window's router with `router(window, cx)`. Update the returned entity to call `navigate`, `replace`, `back`, or `forward`. An unknown route returns an error and leaves the current route in place.
-
-Use `manager.navigate_with("/register", RegisterData { email, password }, cx)` to pass a value to a page in memory. The destination receives it at creation through `Page::on_navigate`:
+Place a `layout.rs` file in any directory under `src/pages/` to wrap that directory's page and all nested routes. Shared ancestor layouts stay mounted and retain their state when navigating between sibling routes.
 
 ```rust
-fn on_navigate(&mut self, data: NavigationData, _: &mut Context<Self>) {
-    if let Some(data) = data.take::<RegisterData>() {
-        self.email = data.email;
-        self.password = data.password;
+use gpui_pages::prelude::*;
+
+pub(crate) struct RootLayout(AnyView);
+
+impl PageLayout for RootLayout {
+    fn new(child: AnyView, _: &mut Context<Self>) -> Self {
+        Self(child)
+    }
+
+    fn set_child(&mut self, child: AnyView) {
+        self.0 = child;
+    }
+
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(self.0.clone())
     }
 }
 ```
 
-Define `RegisterData` in a module shared by both pages. The payload is excluded from the URL and history. Direct visits and back or forward navigation create the page without a payload. Sending another payload to the current URL creates a new instance without adding a history entry.
+## Navigation & History
 
-A directory prefixed with an underscore defines a parameter. For example, `src/pages/users/_id/mod.rs` matches `/users/42`. In a page, use `router(window, cx)` and read `manager.read(cx).param("id")` to get the current value. Static segments have priority over parameter segments at the same depth. Parameter values are returned as written in the path, without percent decoding. A directory can have one dynamic child, and each parameter name can appear once in a route.
+Access the current window's router with `router(window, cx)` and update the returned `Entity<PageManager>`:
 
-Pages can override `Page::options()` with `PageOptions::default().on_open(PageAnimation::SlideFade).on_close(PageAnimation::Fade)`. Use `.configure(PagesConfig::new().default_animation(...))` before `.routes(...)` to set app defaults. Scale effects adjust GPUI rem-based sizing within the transitioning view. Fixed-pixel dimensions keep their size.
+```rust
+if let Some(manager) = router(window, cx) {
+    manager.update(cx, |manager, cx| {
+        let _ = manager.navigate("/dashboard/42?tab=overview", cx);
+    });
+}
+```
 
-Use `PageOptions::default().title("Profile")` to set a page's window title. Pages without a title use the application title.
+Available methods on `PageManager`:
 
-Use `PageOptions::default().without_root_layout()` to omit `src/pages/layout.rs` for a page. Nested layouts still apply.
+- `navigate(path, cx)` / `replace(path, cx)`
+- `navigate_with(path, data, cx)` — passes an in-memory payload delivered once to `Page::on_navigate`:
+  ```rust
+  fn on_navigate(&mut self, data: NavigationData, _: &mut Context<Self>) {
+      if let Some(data) = data.take::<RegisterData>() {
+          self.email = data.email;
+      }
+  }
+  ```
+- `back(cx)` / `forward(cx)` / `can_back()` / `can_forward()`
+- `current_path()` / `current_title()`
 
-Run `cargo run -p demo` to visit the example. Increment the Dashboard layout counter and switch between Juanito and Settings to see the shared layout retain its state. Open Profile to see a transition.
+Unknown routes return `Err(NavigationError::UnknownRoute(_))` and leave the active route unchanged.
+
+## Dynamic & Query Parameters
+
+- A directory prefixed with `_` (for example `src/pages/users/_id/mod.rs`) defines a dynamic parameter `:id`. Static segments take precedence over dynamic segments at the same depth.
+- Read route parameters with `manager.read(cx).param("id")`.
+- Read query parameters with `manager.read(cx).query("tab")` or the raw query string with `manager.read(cx).query_string()`.
+- Values are returned as written in the path without percent decoding.
+
+## Page Options & Transitions
+
+Override `Page::options()` to configure per-page behavior:
+
+```rust
+fn options() -> PageOptions {
+    PageOptions::default()
+        .title("Profile")
+        .on_open(PageAnimation::SlideFade)
+        .on_close(PageAnimation::Fade)
+        .without_root_layout()
+}
+```
+
+Set application-wide transition defaults with `.configure(PagesConfig::new().default_animation(...))` before `.routes(PAGE_ROUTES)`. Transitions automatically honor the system's `reduce_motion` preference.
+
+## Custom Window Setup
+
+When opening windows manually (for example with `gpui-kit`, custom `WindowOptions`, or system tray integration), use `run_with` together with `PageManager::new` / `PageManager::with_config` and `PageManager::attach`:
+
+```rust
+app.use_pages().run_with(|cx| {
+    let manager = match PageManager::new(PAGE_ROUTES, "/", cx) {
+        Ok(manager) => cx.new(|_| manager),
+        Err(error) => {
+            eprintln!("{error}");
+            cx.quit();
+            return;
+        }
+    };
+
+    let _ = cx.open_window(WindowOptions::default(), move |window, cx| {
+        PageManager::attach(&manager, window, cx);
+        manager
+    });
+});
+```
+
+`PageManager::attach` registers the router for `router(window, cx)` and keeps the window title synchronized with `PageOptions::title`. You can also use `PageManager::mount` or `PageManager::mount_with_config` directly inside a window constructor.
+
+## Example
+
+Run `cargo run -p demo` to explore nested layouts, persistent layout state, dynamic routes, and page transitions.

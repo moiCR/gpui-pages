@@ -5,7 +5,7 @@ use gpui::{
     AnyView, App, AppContext, Application, Context, Entity, Global, IntoElement, ParentElement,
     Render, SharedString, Styled, Subscription, WeakEntity, Window, WindowId, WindowOptions, div,
 };
-pub use pages_macros::include_pages;
+pub use gpui_pages_macros::include_pages;
 use std::{any::Any, collections::HashMap, rc::Rc};
 
 struct PagesEnabled;

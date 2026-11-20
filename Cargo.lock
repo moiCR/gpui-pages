@@ -1592,10 +1592,21 @@ dependencies = [
 name = "gpui-pages"
 version = "0.1.0"
 dependencies = [
+ "gpui-pages-codegen",
+ "gpui-pages-macros",
  "gpui-pre",
- "pages-codegen",
- "pages-macros",
 ]
+
+[[package]]
+name = "gpui-pages-codegen"
+version = "0.1.0"
+dependencies = [
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "gpui-pages-macros"
+version = "0.1.0"
 
 [[package]]
 name = "gpui-pre"
@@ -3396,17 +3407,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
 ]
-
-[[package]]
-name = "pages-codegen"
-version = "0.1.0"
-dependencies = [
- "syn 2.0.119",
-]
-
-[[package]]
-name = "pages-macros"
-version = "0.1.0"
 
 [[package]]
 name = "parking"

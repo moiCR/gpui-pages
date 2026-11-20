@@ -1,5 +1,5 @@
 #[cfg(feature = "codegen")]
-pub use pages_codegen::build;
+pub use gpui_pages_codegen::build;
 
 #[cfg(feature = "runtime")]
 mod runtime;

@@ -11,6 +11,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/moiCR/gpui-pages"
+readme = "README.md"
 
 [workspace.dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.12" }
