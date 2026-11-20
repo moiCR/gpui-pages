@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 gpui-pages = { path = "../pages" }
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.13" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12" }
 
 [build-dependencies]
 pages-codegen = { path = "../codegen" }

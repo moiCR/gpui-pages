@@ -5,7 +5,7 @@ use gpui::{
 };
 pub use pages_macros::include_pages;
 mod transition;
-use std::rc::Rc;
+use std::{any::Any, rc::Rc};
 use transition::Transition;
 pub use transition::{PageAnimation, PageOptions, PagesConfig};
 
@@ -136,13 +136,30 @@ pub trait PageLayout: Render {
 pub trait Page: Render + Default {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
 
+    fn on_navigate(&mut self, _data: NavigationData, _cx: &mut Context<Self>) {}
+
     fn options() -> PageOptions {
         PageOptions::default()
     }
 }
 
-pub fn mount_page<P: Page>(cx: &mut App) -> AnyView {
-    cx.new(|_| P::default()).into()
+pub struct NavigationData(Box<dyn Any>);
+
+impl NavigationData {
+    pub fn take<T: 'static>(self) -> Option<T> {
+        self.0.downcast::<T>().ok().map(|value| *value)
+    }
+}
+
+pub fn mount_page<P: Page>(data: Option<NavigationData>, cx: &mut App) -> AnyView {
+    cx.new(|cx| {
+        let mut page = P::default();
+        if let Some(data) = data {
+            page.on_navigate(data, cx);
+        }
+        page
+    })
+    .into()
 }
 
 pub fn mount_layout<L: PageLayout>(child: AnyView, cx: &mut App) -> MountedLayout {
@@ -151,8 +168,8 @@ pub fn mount_layout<L: PageLayout>(child: AnyView, cx: &mut App) -> MountedLayou
 
 pub mod prelude {
     pub use crate::{
-        ApplicationExt, Page, PageAnimation, PageLayout, PageOptions, PagesConfig, include_pages,
-        router,
+        ApplicationExt, NavigationData, Page, PageAnimation, PageLayout, PageOptions, PagesConfig,
+        include_pages, router,
     };
     pub use gpui::{AnyView, Context, IntoElement, Window, div, prelude::*};
 }
@@ -187,7 +204,7 @@ pub struct Layout {
 
 pub struct Route {
     pub path: &'static str,
-    pub mount: fn(&mut App) -> AnyView,
+    pub mount: fn(Option<NavigationData>, &mut App) -> AnyView,
     pub layouts: &'static [Layout],
     pub options: fn() -> PageOptions,
 }
@@ -252,7 +269,7 @@ impl PageManager {
         let active = find_route(routes, path)?;
         let options = (active.route.options)();
         let active_layouts = active.route.active_layouts(options);
-        let page = (active.route.mount)(cx);
+        let page = (active.route.mount)(None, cx);
         let transition = (!cx.reduce_motion())
             .then(|| options.effect(config, true))
             .flatten()
@@ -276,21 +293,45 @@ impl PageManager {
     }
 
     pub fn navigate(&mut self, path: &str, cx: &mut Context<Self>) -> Result<(), NavigationError> {
+        self.navigate_to(path, None, cx)
+    }
+
+    pub fn navigate_with<T: 'static>(
+        &mut self,
+        path: &str,
+        data: T,
+        cx: &mut Context<Self>,
+    ) -> Result<(), NavigationError> {
+        self.navigate_to(path, Some(NavigationData(Box::new(data))), cx)
+    }
+
+    fn navigate_to(
+        &mut self,
+        path: &str,
+        data: Option<NavigationData>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), NavigationError> {
         if self.current_path() == path {
+            if data.is_some() {
+                self.activate(self.active.clone(), data, cx);
+            }
             return Ok(());
         }
         let route = find_route(self.routes, path)?;
         self.history.truncate(self.history_index + 1);
         self.history.push(route.clone());
         self.history_index += 1;
-        self.activate(route, cx);
+        self.activate(route, data, cx);
         Ok(())
     }
 
     pub fn replace(&mut self, path: &str, cx: &mut Context<Self>) -> Result<(), NavigationError> {
+        if self.current_path() == path {
+            return Ok(());
+        }
         let route = find_route(self.routes, path)?;
         self.history[self.history_index] = route.clone();
-        self.activate(route, cx);
+        self.activate(route, None, cx);
         Ok(())
     }
 
@@ -326,14 +367,11 @@ impl PageManager {
             return false;
         };
         self.history_index = index;
-        self.activate(route, cx);
+        self.activate(route, None, cx);
         true
     }
 
-    fn activate(&mut self, next: RouteMatch, cx: &mut Context<Self>) {
-        if self.active.path == next.path {
-            return;
-        }
+    fn activate(&mut self, next: RouteMatch, data: Option<NavigationData>, cx: &mut Context<Self>) {
         let route = next.route;
         let options = (route.options)();
         let next_layouts = route.active_layouts(options);
@@ -351,7 +389,7 @@ impl PageManager {
             .get(shared)
             .map_or_else(|| self.page.clone(), |layout| layout.view.clone());
         self.layouts.truncate(shared);
-        let page = (route.mount)(cx);
+        let page = (route.mount)(data, cx);
         let (mut view, layouts) = mount_layouts(&next_layouts[shared..], page.clone(), cx);
         if !cx.reduce_motion() {
             let opening = options.effect(self.config, true);

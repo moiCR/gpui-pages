@@ -46,22 +46,47 @@ impl Error for GenerateError {
 }
 
 pub fn generate(crate_root: impl AsRef<Path>) -> Result<String, GenerateError> {
-    generate_tracking(crate_root, |_| {})
+    let generated = generate_parts(crate_root, None, |_| {})?;
+    Ok(format!(
+        "pub mod pages {{\n{}}}\n\n{}",
+        generated.modules, generated.registry
+    ))
+}
+
+pub(crate) struct GeneratedPages {
+    pub(crate) modules: String,
+    pub(crate) registry: String,
 }
 
 pub(crate) fn generate_tracking(
     crate_root: impl AsRef<Path>,
+    track_source: impl FnMut(&Path),
+) -> Result<GeneratedPages, GenerateError> {
+    generate_parts(crate_root, Some("pages/"), track_source)
+}
+
+fn generate_parts(
+    crate_root: impl AsRef<Path>,
+    relative_directory: Option<&str>,
     mut track_source: impl FnMut(&Path),
-) -> Result<String, GenerateError> {
+) -> Result<GeneratedPages, GenerateError> {
     let absolute_root = std::path::absolute(crate_root).map_err(GenerateError::CrateRoot)?;
     let root = RouteNode::discover(absolute_root).map_err(GenerateError::Discover)?;
     let mut modules = BTreeMap::new();
-    let mut output = String::from("pub mod pages {\n");
-    emit_node(&root, "pages", &mut modules, &mut output)?;
+    let mut declarations = String::new();
+    emit_node(
+        &root,
+        "pages",
+        relative_directory,
+        &mut modules,
+        &mut declarations,
+    )?;
     for source in modules.keys() {
         track_source(source);
     }
-    output.push_str("}\n\npub struct GeneratedRoute {\n    pub path: &'static str,\n    pub page: &'static str,\n    pub layouts: &'static [&'static str],\n}\n\npub const ROUTES: &[GeneratedRoute] = &[\n");
+    let mut output = String::from(
+        "pub struct GeneratedRoute {\n    pub path: &'static str,\n    pub page: &'static str,\n    pub layouts: &'static [&'static str],\n}\n\npub const ROUTES: &[GeneratedRoute] = &[\n",
+    );
 
     let routes = root.route_table();
     for entry in &routes {
@@ -107,7 +132,10 @@ pub(crate) fn generate_tracking(
             "\nimpl ::gpui_pages::gpui::Render for {module}::{component} {{\n    fn render(&mut self, window: &mut ::gpui_pages::gpui::Window, cx: &mut ::gpui_pages::gpui::Context<Self>) -> impl ::gpui_pages::gpui::IntoElement {{\n        <Self as ::gpui_pages::{trait_name}>::render(self, window, cx)\n    }}\n}}\n"
         ));
     }
-    Ok(output)
+    Ok(GeneratedPages {
+        modules: declarations,
+        registry: output,
+    })
 }
 
 fn component_type(path: &Path, trait_name: &str) -> Result<(String, &'static str), GenerateError> {
@@ -204,6 +232,7 @@ fn component_for<'a>(
 fn emit_node<'a>(
     node: &'a RouteNode,
     module: &str,
+    relative_directory: Option<&str>,
     modules: &mut BTreeMap<&'a Path, Module>,
     output: &mut String,
 ) -> Result<(), GenerateError> {
@@ -211,7 +240,14 @@ fn emit_node<'a>(
         if node.children.contains_key(INDEX) {
             return Err(GenerateError::IndexCollision(page.source.clone()));
         }
-        emit_file(INDEX, &page.source, module, modules, output)?;
+        emit_file(
+            INDEX,
+            &page.source,
+            module,
+            relative_directory,
+            modules,
+            output,
+        )?;
         let component = component_for(modules, &page.source)?;
         let name = component.trim_start_matches("r#");
         if name == INDEX
@@ -227,12 +263,30 @@ fn emit_node<'a>(
         }
     }
     if let Some(layout) = &node.layout {
-        emit_file("layout", &layout.source, module, modules, output)?;
+        emit_file(
+            "layout",
+            &layout.source,
+            module,
+            relative_directory,
+            modules,
+            output,
+        )?;
     }
+    let indent = "    ".repeat(module.matches("::").count());
     for (segment, child) in &node.children {
-        output.push_str(&format!("pub mod r#{segment} {{\n"));
-        emit_node(child, &format!("{module}::{segment}"), modules, output)?;
-        output.push_str("}\n");
+        if let Some(directory) = relative_directory {
+            let child_directory = format!("{directory}{segment}");
+            output.push_str(&format!("{indent}#[path = {child_directory:?}]\n"));
+        }
+        output.push_str(&format!("{indent}pub mod r#{segment} {{\n"));
+        emit_node(
+            child,
+            &format!("{module}::{segment}"),
+            relative_directory.map(|_| ""),
+            modules,
+            output,
+        )?;
+        output.push_str(&format!("{indent}}}\n"));
     }
     Ok(())
 }
@@ -241,22 +295,31 @@ fn emit_file<'a>(
     name: &str,
     source: &'a Path,
     parent: &str,
+    relative_directory: Option<&str>,
     modules: &mut BTreeMap<&'a Path, Module>,
     output: &mut String,
 ) -> Result<(), GenerateError> {
-    let path = source
-        .to_str()
-        .ok_or_else(|| GenerateError::NonUtf8Path(source.to_owned()))?;
     let is_page = name == INDEX;
+    let file = if is_page { "mod.rs" } else { "layout.rs" };
+    let source_path = match relative_directory {
+        Some(directory) => format!("{directory}{file}"),
+        None => source
+            .to_str()
+            .ok_or_else(|| GenerateError::NonUtf8Path(source.to_owned()))?
+            .to_owned(),
+    };
+    let indent = "    ".repeat(parent.matches("::").count());
     let trait_name = if is_page { "Page" } else { "PageLayout" };
     let (component, visibility) = component_type(source, trait_name)?;
     let module = if is_page {
         output.push_str(&format!(
-            "#[path = {path:?}]\nmod {name};\n{visibility} use self::{name}::{component};\n"
+            "{indent}#[path = {source_path:?}]\n{indent}mod {name};\n{indent}{visibility} use self::{name}::{component};\n"
         ));
         parent.to_owned()
     } else {
-        output.push_str(&format!("#[path = {path:?}]\npub mod r#{name};\n"));
+        output.push_str(&format!(
+            "{indent}#[path = {source_path:?}]\n{indent}pub mod r#{name};\n"
+        ));
         format!("{parent}::{name}")
     };
     modules.insert(

@@ -130,8 +130,16 @@ fn generates_updated_routes_as_directories_and_layouts_change()
     })?;
     assert!(watched.contains(&page));
     assert!(watched.contains(&layout));
-    assert!(generated.contains("path: \"/account\""));
-    assert!(generated.contains("pages::account::layout"));
+    assert!(generated.modules.contains("#[path = \"pages/account\"]"));
+    assert!(generated.modules.contains("#[path = \"mod.rs\"]"));
+    assert!(
+        !generated
+            .modules
+            .contains(&fixture.0.to_string_lossy().into_owned())
+    );
+    assert!(!generated.registry.contains("pub mod"));
+    assert!(generated.registry.contains("path: \"/account\""));
+    assert!(generated.registry.contains("pages::account::layout"));
 
     fs::remove_file(layout)?;
     assert!(!generate(&fixture.0)?.contains("pages::account::layout"));

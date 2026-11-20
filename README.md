@@ -16,6 +16,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 use gpui_pages::prelude::*;
 
+#[rustfmt::skip]
+#[path = "pages_modules.rs"]
+pub mod pages;
+
 include_pages!();
 
 fn main() {
@@ -27,7 +31,7 @@ fn main() {
 }
 ```
 
-The build script watches `src/pages` and writes the registry to Cargo's output directory. The macro includes that registry once. The framework opens a GPUI window at `/`.
+The build script watches `src/pages` and generates `src/pages_modules.rs` with ordinary module declarations so rust-analyzer can index route files. Run `cargo check` once after cloning to create it. You can ignore the generated file in Git. Cargo updates it when the route tree changes. The route registry and generated `Render` implementations go to Cargo's output directory and are included by the macro. The framework opens a GPUI window at `/`.
 
 `src/pages/mod.rs`
 
@@ -57,6 +61,19 @@ Every route comes from a directory containing `mod.rs`. Directories without an i
 Each `mod.rs` contains one top-level `impl Page` for a local, non-generic `pub` or `pub(crate)` struct. Qualified trait paths ending in `Page` are accepted. A `layout.rs` has the same visibility convention and implements `PageLayout`, with methods for constructing it with its child, replacing that child, and rendering.
 
 Get the window's router with `router(window, cx)`. Update the returned entity to call `navigate`, `replace`, `back`, or `forward`. An unknown route returns an error and leaves the current route in place.
+
+Use `manager.navigate_with("/register", RegisterData { email, password }, cx)` to pass a value to a page in memory. The destination receives it at creation through `Page::on_navigate`:
+
+```rust
+fn on_navigate(&mut self, data: NavigationData, _: &mut Context<Self>) {
+    if let Some(data) = data.take::<RegisterData>() {
+        self.email = data.email;
+        self.password = data.password;
+    }
+}
+```
+
+Define `RegisterData` in a module shared by both pages. The payload is excluded from the URL and history. Direct visits and back or forward navigation create the page without a payload. Sending another payload to the current URL creates a new instance without adding a history entry.
 
 A directory prefixed with an underscore defines a parameter. For example, `src/pages/users/_id/mod.rs` matches `/users/42`. In a page, use `router(window, cx)` and read `manager.read(cx).param("id")` to get the current value. Static segments have priority over parameter segments at the same depth. Parameter values are returned as written in the path, without percent decoding. A directory can have one dynamic child, and each parameter name can appear once in a route.
 
