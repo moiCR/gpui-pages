@@ -1,4 +1,7 @@
 use crate::layout::NodeLayout;
+#[cfg(test)]
+mod tests;
+
 use std::{
     collections::BTreeMap,
     fmt, fs, io,
@@ -9,6 +12,12 @@ use std::{
 pub struct Route {
     pub path: String,
     pub source: PathBuf,
+}
+
+#[derive(Debug)]
+pub struct RouteEntry<'a> {
+    pub page: &'a Route,
+    pub layouts: Vec<&'a NodeLayout>,
 }
 
 #[derive(Debug, Default)]
@@ -23,6 +32,34 @@ impl RouteNode {
         let mut root = Self::default();
         root.scan(&crate_root.as_ref().join("src/pages"), "/")?;
         Ok(root)
+    }
+
+    pub fn route_table(&self) -> Vec<RouteEntry<'_>> {
+        let mut routes = Vec::new();
+        self.collect_routes(&mut Vec::new(), &mut routes);
+        routes
+    }
+
+    fn collect_routes<'a>(
+        &'a self,
+        layouts: &mut Vec<&'a NodeLayout>,
+        routes: &mut Vec<RouteEntry<'a>>,
+    ) {
+        let inherited_count = layouts.len();
+        layouts.extend(self.layout.as_ref());
+
+        if let Some(page) = &self.page {
+            routes.push(RouteEntry {
+                page,
+                layouts: layouts.clone(),
+            });
+        }
+
+        for child in self.children.values() {
+            child.collect_routes(layouts, routes);
+        }
+
+        layouts.truncate(inherited_count);
     }
 
     fn scan(&mut self, directory: &Path, route: &str) -> Result<(), DiscoveryError> {
@@ -151,119 +188,5 @@ impl std::error::Error for DiscoveryError {
             Self::Read { source, .. } => Some(source),
             _ => None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{
-        sync::atomic::{AtomicUsize, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
-
-    struct Fixture(PathBuf);
-
-    impl Fixture {
-        fn new() -> Result<Self, Box<dyn std::error::Error>> {
-            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-            let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "pages-codegen-{}-{timestamp}-{sequence}",
-                std::process::id()
-            ));
-            fs::create_dir(&root)?;
-            Ok(Self(root))
-        }
-
-        fn add(&self, name: &str) -> io::Result<PathBuf> {
-            let path = self.0.join("src/pages").join(name);
-            fs::create_dir_all(path.parent().ok_or(io::ErrorKind::InvalidInput)?)?;
-            fs::write(&path, "")?;
-            Ok(path)
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn discovers_pages_and_nested_layouts_in_sorted_order() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let fixture = Fixture::new()?;
-        let users = fixture.add("dashboard/users.rs")?;
-        let settings = fixture.add("settings.rs")?;
-        let root_page = fixture.add("mod.rs")?;
-        let dashboard_page = fixture.add("dashboard/mod.rs")?;
-        let analytics = fixture.add("dashboard/analytics.rs")?;
-        let root_layout = fixture.add("layout.rs")?;
-        let dashboard_layout = fixture.add("dashboard/layout.rs")?;
-        fixture.add("notes.txt")?;
-
-        let root = RouteNode::discover(&fixture.0)?;
-        let dashboard = &root.children["dashboard"];
-        assert_eq!(
-            root.children.keys().collect::<Vec<_>>(),
-            ["dashboard", "settings"]
-        );
-        assert_eq!(
-            dashboard.children.keys().collect::<Vec<_>>(),
-            ["analytics", "users"]
-        );
-        for (node, route, source) in [
-            (&root, "/", root_page),
-            (&root.children["settings"], "/settings", settings),
-            (dashboard, "/dashboard", dashboard_page),
-            (
-                &dashboard.children["analytics"],
-                "/dashboard/analytics",
-                analytics,
-            ),
-            (&dashboard.children["users"], "/dashboard/users", users),
-        ] {
-            assert_eq!(
-                node.page
-                    .as_ref()
-                    .map(|page| (page.path.as_str(), &page.source)),
-                Some((route, &source))
-            );
-        }
-        assert_eq!(
-            root.layout.as_ref().map(|layout| &layout.source),
-            Some(&root_layout)
-        );
-        assert_eq!(
-            dashboard.layout.as_ref().map(|layout| &layout.source),
-            Some(&dashboard_layout)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn reports_both_sources_of_a_duplicate_route() -> Result<(), Box<dyn std::error::Error>> {
-        let fixture = Fixture::new()?;
-        let first = fixture.add("dashboard/mod.rs")?;
-        let second = fixture.add("dashboard.rs")?;
-        assert!(
-            matches!(RouteNode::discover(&fixture.0), Err(DiscoveryError::Conflict {
-            route, first: actual_first, second: actual_second,
-        }) if route == "/dashboard" && actual_first == first && actual_second == second)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn reports_the_path_of_an_invalid_page_name() -> Result<(), Box<dyn std::error::Error>> {
-        let fixture = Fixture::new()?;
-        let invalid = fixture.add("bad-name.rs")?;
-        assert!(
-            matches!(RouteNode::discover(&fixture.0), Err(DiscoveryError::InvalidName(path)) if path == invalid)
-        );
-        Ok(())
     }
 }
