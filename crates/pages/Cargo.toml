@@ -9,6 +9,12 @@ repository.workspace = true
 name = "gpui_pages"
 path = "src/lib.rs"
 
+[features]
+default = ["runtime"]
+runtime = ["dep:gpui", "dep:pages-macros"]
+codegen = ["dep:pages-codegen"]
+
 [dependencies]
-gpui.workspace = true
-pages-macros = { path = "../macros" }
+gpui = { workspace = true, optional = true }
+pages-codegen = { path = "../codegen", optional = true }
+pages-macros = { path = "../macros", optional = true }

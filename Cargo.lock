@@ -937,7 +937,6 @@ version = "0.1.0"
 dependencies = [
  "gpui-pages",
  "gpui-pre-platform",
- "pages-codegen",
 ]
 
 [[package]]
@@ -1594,6 +1593,7 @@ name = "gpui-pages"
 version = "0.1.0"
 dependencies = [
  "gpui-pre",
+ "pages-codegen",
  "pages-macros",
 ]
 

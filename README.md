@@ -10,13 +10,24 @@ Directory-based routing for GPUI. Automatically discover and register pages with
 
 This pairing uses the default GPUI backend. [GPUI Kit dependency versions](https://docs.rs/crate/gpui-kit/0.10.0)
 
-Add `gpui-pages` and the matching `gpui-pre-platform` backend to the app's dependencies, and add `pages-codegen` to its build dependencies. For a complete workspace example, see `crates/demo/Cargo.toml`.
+Add `gpui-pages` and the matching `gpui-pre-platform` backend to the app's dependencies. Enable only the `codegen` feature on the build dependency so the build script can generate routes without compiling the GPUI runtime.
+
+`Cargo.toml`
+
+```toml
+[dependencies]
+gpui-pages = { git = "https://github.com/moiCR/gpui-pages" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12" }
+
+[build-dependencies]
+gpui-pages = { git = "https://github.com/moiCR/gpui-pages", default-features = false, features = ["codegen"] }
+```
 
 `build.rs`
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    pages_codegen::build()
+    gpui_pages::build()
 }
 ```
 
