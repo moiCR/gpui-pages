@@ -10,3 +10,4 @@ name = "gpui_pages"
 path = "src/lib.rs"
 
 [dependencies]
+gpui.workspace = true

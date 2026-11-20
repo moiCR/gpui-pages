@@ -1,4 +1,5 @@
 use super::{DiscoveryError, RouteNode};
+use crate::{GenerateError, generate};
 use std::{
     fs, io,
     path::PathBuf,
@@ -7,6 +8,28 @@ use std::{
 };
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn generates_reproducible_rust() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    fixture.add("mod.rs")?;
+    fixture.add("type.rs")?;
+    let generated = generate(&fixture.0)?;
+    assert_eq!(generated, generate(&fixture.0)?);
+    assert!(generated.contains("pub mod r#type;"));
+    Ok(())
+}
+
+#[test]
+fn rejects_index_module_collisions() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let index = fixture.add("mod.rs")?;
+    fixture.add("__gpui_pages_index.rs")?;
+    assert!(
+        matches!(generate(&fixture.0), Err(GenerateError::IndexCollision(path)) if path == index)
+    );
+    Ok(())
+}
 
 struct Fixture(PathBuf);
 
@@ -141,6 +164,9 @@ fn reports_both_sources_of_a_duplicate_route() -> Result<(), Box<dyn std::error:
     let fixture = Fixture::new()?;
     let first = fixture.add("dashboard/mod.rs")?;
     let second = fixture.add("dashboard.rs")?;
+    assert!(matches!(generate(&fixture.0), Err(GenerateError::Discover(
+        DiscoveryError::Conflict { route, .. }
+    )) if route == "/dashboard"));
     assert!(
         matches!(RouteNode::discover(&fixture.0), Err(DiscoveryError::Conflict {
             route, first: actual_first, second: actual_second,

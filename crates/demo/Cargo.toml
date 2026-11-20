@@ -6,3 +6,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+gpui-pages = { path = "../pages" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.13" }
+
+[build-dependencies]
+pages-codegen = { path = "../codegen" }
