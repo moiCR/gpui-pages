@@ -24,6 +24,8 @@ impl PageLayout for RootLayout {
                         ("/dashboard", "Dashboard"),
                         ("/dashboard/juanito", "Juanito"),
                         ("/dashboard/settings", "Settings"),
+                        ("/dashboard/42", "Item 42"),
+                        ("/dashboard/73", "Item 73"),
                         ("/profile", "Profile"),
                     ]
                     .map(|(path, label)| {

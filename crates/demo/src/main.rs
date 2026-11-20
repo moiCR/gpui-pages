@@ -64,6 +64,12 @@ mod tests {
                 options: || PageOptions::default().without_root_layout(),
                 layouts: TRACKED_LAYOUTS,
             },
+            Route {
+                path: "/:id",
+                mount: mount_page::<pages::dashboard::_id::DashboardItem>,
+                options: PageOptions::default,
+                layouts: TRACKED_LAYOUTS,
+            },
         ];
         gpui_platform::headless().use_pages().run_with(|cx| {
             cx.quit();
@@ -74,7 +80,7 @@ mod tests {
                     .navigate("/settings", cx)
                     .expect("navigate to Settings");
                 assert!(matches!(
-                    manager.navigate("/missing", cx),
+                    manager.navigate("/missing/extra", cx),
                     Err(NavigationError::UnknownRoute(_))
                 ));
                 assert_eq!(manager.current_path(), "/settings");
@@ -88,6 +94,22 @@ mod tests {
                 assert!(manager.forward(cx));
                 assert_eq!(manager.current_path(), "/juanito");
                 assert!(!manager.forward(cx));
+                manager.navigate("/42", cx).expect("open item 42");
+                assert_eq!(manager.param("id"), Some("42"));
+                manager.navigate("/73", cx).expect("open item 73");
+                assert_eq!(manager.current_path(), "/73");
+                assert_eq!(manager.param("id"), Some("73"));
+                assert!(manager.back(cx));
+                assert_eq!(manager.current_path(), "/42");
+                assert_eq!(manager.param("id"), Some("42"));
+                assert!(manager.forward(cx));
+                assert_eq!(manager.param("id"), Some("73"));
+                manager.replace("/91", cx).expect("replace item");
+                assert_eq!(manager.param("id"), Some("91"));
+                manager
+                    .navigate("/settings", cx)
+                    .expect("prefer static route");
+                assert_eq!(manager.param("id"), None);
             });
             DASHBOARD_MOUNTS.with(|count| assert_eq!(count.get(), 1));
             ROOT_MOUNTS.with(|count| assert_eq!(count.get(), 1));
@@ -133,6 +155,7 @@ mod tests {
             [
                 ("/", "pages", root),
                 ("/dashboard", "pages::dashboard", dashboard),
+                ("/dashboard/:id", "pages::dashboard::_id", dashboard),
                 ("/dashboard/juanito", "pages::dashboard::juanito", dashboard),
                 (
                     "/dashboard/settings",

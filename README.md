@@ -58,6 +58,8 @@ Each `mod.rs` contains one top-level `impl Page` for a local, non-generic `pub` 
 
 Get the window's router with `router(window, cx)`. Update the returned entity to call `navigate`, `replace`, `back`, or `forward`. An unknown route returns an error and leaves the current route in place.
 
+A directory prefixed with an underscore defines a parameter. For example, `src/pages/users/_id/mod.rs` matches `/users/42`. In a page, use `router(window, cx)` and read `manager.read(cx).param("id")` to get the current value. Static segments have priority over parameter segments at the same depth. Parameter values are returned as written in the path, without percent decoding. A directory can have one dynamic child, and each parameter name can appear once in a route.
+
 Pages can override `Page::options()` with `PageOptions::default().on_open(PageAnimation::SlideFade).on_close(PageAnimation::Fade)`. Use `.configure(PagesConfig::new().default_animation(...))` before `.routes(...)` to set app defaults. Scale effects adjust GPUI rem-based sizing within the transitioning view. Fixed-pixel dimensions keep their size.
 
 Use `PageOptions::default().title("Profile")` to set a page's window title. Pages without a title use the application title.

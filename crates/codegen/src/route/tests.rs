@@ -10,6 +10,38 @@ use std::{
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn discovers_dynamic_directories_and_inherits_their_layouts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let page = fixture.add("users/_id/posts/_post/mod.rs")?;
+    let layout = fixture.add("users/_id/layout.rs")?;
+    let root = RouteNode::discover(&fixture.0)?;
+    let table = root.route_table();
+    assert_eq!(table.len(), 1);
+    assert_eq!(table[0].page.path, "/users/:id/posts/:post");
+    assert_eq!(table[0].page.source, page);
+    assert_eq!(table[0].layouts[0].source, layout);
+    Ok(())
+}
+
+#[test]
+fn reports_ambiguous_and_repeated_parameters() -> Result<(), Box<dyn std::error::Error>> {
+    let ambiguous = Fixture::new()?;
+    let first = ambiguous.add("users/_id/mod.rs")?;
+    let second = ambiguous.add("users/_name/mod.rs")?;
+    assert!(matches!(RouteNode::discover(&ambiguous.0),
+        Err(DiscoveryError::AmbiguousParameters { first: left, second: right })
+            if Some(left.as_path()) == first.parent() && Some(right.as_path()) == second.parent()));
+
+    let repeated = Fixture::new()?;
+    let page = repeated.add("users/_id/posts/_id/mod.rs")?;
+    assert!(matches!(RouteNode::discover(&repeated.0),
+        Err(DiscoveryError::RepeatedParameter { path, parameter })
+            if Some(path.as_path()) == page.parent() && parameter == "id"));
+    Ok(())
+}
+
+#[test]
 fn generates_reproducible_rust() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;
     fs::write(

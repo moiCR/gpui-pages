@@ -92,8 +92,8 @@ impl RouteNode {
                         .any(|part| part.strip_prefix(':') == Some(parameter))
                     {
                         return Err(DiscoveryError::RepeatedParameter {
-                            path,
                             parameter: parameter.to_owned(),
+                            path,
                         });
                     }
                     if let Some(first) = dynamic_directory.replace(path.clone()) {
