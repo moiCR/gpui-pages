@@ -1,0 +1,12 @@
+[package]
+name = "gpui-pages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "gpui_pages"
+path = "src/lib.rs"
+
+[dependencies]

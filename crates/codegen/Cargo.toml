@@ -1,0 +1,12 @@
+[package]
+name = "pages-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "pages_codegen"
+path = "src/lib.rs"
+
+[dependencies]

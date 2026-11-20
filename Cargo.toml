@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/pages",
+    "crates/macros",
+    "crates/codegen", "crates/demo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/moiCR/gpui-pages"
+
+[workspace.dependencies]
+gpui = { package = "gpui-pre", version = "0.3.13" }
