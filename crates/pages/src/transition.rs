@@ -167,6 +167,7 @@ impl Transition {
 impl Render for Transition {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
+            .size_full()
             .relative()
             .overflow_hidden()
             .children(self.outgoing.as_ref().map(|(view, effect)| {
@@ -178,6 +179,7 @@ impl Render for Transition {
             .child(match self.opening {
                 Some(effect) => animated(self.current.clone(), effect, true),
                 None => div()
+                    .size_full()
                     .occlude()
                     .child(self.current.clone())
                     .into_any_element(),
@@ -186,7 +188,11 @@ impl Render for Transition {
 }
 
 fn animated(view: AnyView, effect: Effect, opening: bool) -> AnyElement {
-    let element = if opening { div().occlude() } else { div() };
+    let element = if opening {
+        div().size_full().occlude()
+    } else {
+        div().size_full()
+    };
     element
         .with_animation(
             if opening {

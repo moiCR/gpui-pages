@@ -3,14 +3,25 @@ pub use crate::transition::{PageAnimation, PageOptions, PagesConfig};
 pub use gpui;
 use gpui::{
     AnyView, App, AppContext, Application, Context, Entity, Global, IntoElement, ParentElement,
-    Render, SharedString, Subscription, Window, WindowOptions, div,
+    Render, SharedString, Styled, Subscription, WeakEntity, Window, WindowId, WindowOptions, div,
 };
 pub use pages_macros::include_pages;
-use std::{any::Any, rc::Rc};
+use std::{any::Any, collections::HashMap, rc::Rc};
 
 struct PagesEnabled;
 
 impl Global for PagesEnabled {}
+
+#[derive(Default)]
+struct WindowRouters(HashMap<WindowId, WeakEntity<PageManager>>);
+
+impl Global for WindowRouters {}
+
+fn register_window_router(window_id: WindowId, manager: &Entity<PageManager>, cx: &mut App) {
+    let routers = cx.default_global::<WindowRouters>();
+    routers.0.retain(|_, entry| entry.is_upgradable());
+    routers.0.insert(window_id, manager.downgrade());
+}
 
 pub trait ApplicationExt {
     fn use_pages(self) -> PagesApplication;
@@ -117,13 +128,18 @@ struct PagesRoot {
 
 impl Render for PagesRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().child(self.manager.clone())
+        div().size_full().child(self.manager.clone())
     }
 }
 
 pub fn router(window: &Window, cx: &App) -> Option<Entity<PageManager>> {
-    let root = window.root::<PagesRoot>().flatten()?;
-    Some(root.read(cx).manager.clone())
+    if let Some(root) = window.root::<PagesRoot>().flatten() {
+        return Some(root.read(cx).manager.clone());
+    }
+    cx.try_global::<WindowRouters>()?
+        .0
+        .get(&window.window_handle().window_id())?
+        .upgrade()
 }
 
 pub trait PageLayout: Render {
@@ -254,6 +270,18 @@ impl PageManager {
         cx: &mut App,
     ) -> Result<Self, NavigationError> {
         Self::with_config(routes, path, PagesConfig::default(), cx)
+    }
+
+    pub fn mount(
+        routes: &'static [Route],
+        path: &str,
+        window: &Window,
+        cx: &mut App,
+    ) -> Result<Entity<Self>, NavigationError> {
+        let manager = Self::new(routes, path, cx)?;
+        let entity = cx.new(|_| manager);
+        register_window_router(window.window_handle().window_id(), &entity, cx);
+        Ok(entity)
     }
 
     fn with_config(
@@ -415,7 +443,7 @@ impl PageManager {
 
 impl Render for PageManager {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().child(self.view.clone())
+        div().size_full().child(self.view.clone())
     }
 }
 

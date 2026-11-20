@@ -14,6 +14,7 @@ impl PageLayout for RootLayout {
     fn set_child(&mut self, child: AnyView) {
         self.0 = child;
     }
+    
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .p_4()
