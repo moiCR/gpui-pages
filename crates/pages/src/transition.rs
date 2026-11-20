@@ -12,6 +12,8 @@ pub enum PageAnimation {
     Fade,
     Slide,
     SlideFade,
+    SlideUp,
+    SlideUpFade,
     Scale,
     ScaleFade,
 }
@@ -205,7 +207,10 @@ fn animated(view: AnyView, effect: Effect, opening: bool) -> AnyElement {
                 let visibility = if opening { progress } else { 1.0 - progress }.clamp(0.0, 1.0);
                 if matches!(
                     effect.animation,
-                    PageAnimation::Fade | PageAnimation::SlideFade | PageAnimation::ScaleFade
+                    PageAnimation::Fade
+                        | PageAnimation::SlideFade
+                        | PageAnimation::SlideUpFade
+                        | PageAnimation::ScaleFade
                 ) {
                     element = element.opacity(visibility);
                 }
@@ -217,6 +222,15 @@ fn animated(view: AnyView, effect: Effect, opening: bool) -> AnyElement {
                     element = element
                         .relative()
                         .left(px(24.0 * direction * (1.0 - visibility)));
+                }
+                if matches!(
+                    effect.animation,
+                    PageAnimation::SlideUp | PageAnimation::SlideUpFade
+                ) {
+                    let direction = if opening { 1.0 } else { -1.0 };
+                    element = element
+                        .relative()
+                        .top(px(24.0 * direction * (1.0 - visibility)));
                 }
                 if matches!(
                     effect.animation,
